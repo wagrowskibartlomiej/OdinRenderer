@@ -1,0 +1,8 @@
+bin
+lib
+obj
+libmain.so
+*.apk
+*.apk-build
+*.apk.idsig
+keystore
