@@ -46,7 +46,7 @@ android_logger :: proc(logger_data: rawptr, level: log.Level, text: string, opti
 		priority = .FATAL
 	}
 	
-	android.__android_log_buf_write(.DEFAULT, priority, "ODIN_RENDERER", ctext)
+	android.__android_log_write(priority, "ODIN_RENDERER", ctext)
 }
 
 Android_Logger_Arena :: struct {
@@ -147,6 +147,6 @@ android_assert_proc :: proc(prefix, message: string, loc: runtime.Source_Code_Lo
 	tag := strings.clone_to_cstring(prefix)
 	// Is it even worth to delete?
 
-	android.__android_log_buf_write(.CRASH, .FATAL, "ODIN ASSERT", mess)
+	android.__android_log_write(.FATAL, "ODIN ASSERT", mess)
 	runtime.trap()
 }
