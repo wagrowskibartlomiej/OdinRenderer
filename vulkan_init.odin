@@ -53,6 +53,7 @@ Init_Resources_Created_Flags :: bit_set[Init_Resources_Created_Flag]
 
 Renderer_State :: struct {
 	init: Vulkan_Init_State,
+	window: Window_State,
 }
 
 Vulkan_Init_State :: struct {
@@ -112,18 +113,36 @@ initialize_vulkan :: proc(allocator := context.allocator, temp_allocator := cont
 	load_vklib(&state)
 
 	success := create_instance(&state.init, allocator, temp_allocator, callbacks)
-	if !success do log.panic("Cannot create Vulkan instance")
+	if !success {
+		log.fatal("Cannot create Vulkan instance")
+		return 
+	}
 
 	success = pick_physical_device(&state.init, allocator, temp_allocator)
-	if !success do log.panic("Failed to pick physical device ")
+	if !success {
+		log.fatal("Failed to pick physical device ")
+		return
+	}
 
 	success = create_device(&state.init, allocator, callbacks)
-	if !success do log.panic("Failed to create device")
+	if !success {
+		log.fatal("Failed to create device")
+		return
+	}
+
+	success = create_surface(&state.init, &state.window, callbacks)
+	if !success {
+		log.fatal("FAiled to create surface")
+		return
+	}
 	
+
+	when VERBOSE_LOG do log.debug("Initialization successful")
 	return
 }
 
 cleanup_vulkan :: proc(state: ^Renderer_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
+	if .Surface in state.init.resource_flags do cleanup_surface(&state.init, callbacks)
 	if .Device in state.init.resource_flags do cleanup_device(&state.init, allocator, callbacks)
 	if .Physical_Device in state.init.resource_flags do cleanup_physical_devices(&state.init, allocator)
 	if .Instance in state.init.resource_flags do cleanup_instance(&state.init, allocator, callbacks)
@@ -825,4 +844,10 @@ cleanup_device :: proc(state: ^Vulkan_Init_State, allocator := context.allocator
 
 	state.resource_flags &~= {.Device}
 	when VERBOSE_LOG do log.debug("Device resource flag unset")
+}
+
+check_all_flags :: proc(flags: bit_set[$T]) -> (all_present: bool){
+	for flag in T do if flag not_in flags do return false
+	
+	return true
 }

@@ -91,6 +91,7 @@ android_main :: proc "contextless" (state: ^android.android_app) {
     state.onAppCmd = app_state.cmd_proc
     state.onInputEvent = app_state.input_proc
     app_state.app_ptr = state
+    app_state = create_window(state.window)
 
 	app_state.logger.memory = make([]byte, 100 * mem.Kilobyte)
 
