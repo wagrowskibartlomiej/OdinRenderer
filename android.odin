@@ -142,11 +142,11 @@ android_main :: proc "contextless" (state: ^android.android_app) {
 
 android_assert_proc :: proc(prefix, message: string, loc: runtime.Source_Code_Location) -> ! {
 	builder := strings.builder_make()
-	fmt.sbprintf(&builder, prefix, " ", message, " AT: ", loc.file_path, ":", loc.line, "|", loc.procedure)
+	fmt.sbprintf(&builder, "[%v] %v @ %v:%v", prefix, message, loc.line, loc.procedure)
 	mess := strings.to_cstring(&builder)
 	tag := strings.clone_to_cstring(prefix)
 	// Is it even worth to delete?
 
-	android.__android_log_write(.FATAL, "ODIN ASSERT", mess)
+	android.__android_log_assert(nil, "ODIN ASSERT", mess)
 	runtime.trap()
 }
