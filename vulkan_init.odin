@@ -180,6 +180,16 @@ unload_vklib :: proc(state: ^Renderer_State) {
 }
 
 create_instance :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+	// Check for 1.0 implementation
+	_, found := dynlib.symbol_address(state.vklib, "vkEnumerateInstanceVersion")
+	if !found do log.info("Vulkan instance version: 1.0.0")
+	else {
+		ver: u32
+		vk.EnumerateInstanceVersion(&ver)
+		decoded := decode_vk_version(ver)
+		log.infof("Vulkan instance version: %v.%v.%v", decoded.x, decoded.y, decoded.z)
+	}
+
 	enumerated: bool 
 
 	state.instance.available_layers, enumerated = query_instance_layers(allocator)
