@@ -97,7 +97,6 @@ android_main :: proc "contextless" (state: ^android.android_app) {
 	mem.arena_init(&app_state.logger.handle, app_state.logger.memory)
 
 	size := size_of(app_state.logger.memory[0]) * len(app_state.logger.memory)
-	android.__android_log_buf_print(.DEFAULT, .DEBUG, "ODIN", "size %d", size)
 
 	mem.scratch_init(&app_state.logger.scratch, size)
 	app_state.logger.allocator = mem.scratch_allocator(&app_state.logger.scratch)
