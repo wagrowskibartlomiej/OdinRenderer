@@ -3,6 +3,7 @@ package render
 import "core:log"
 import "core:mem"
 import "core:strings"
+import "core:fmt"
 import "base:runtime"
 import "core:c"
 
@@ -15,6 +16,7 @@ Android_State :: struct {
 	cmd_proc: Proc_Handle_Anroid_CMD,
 	input_proc: Proc_Handle_Android_Input,
 	renderer: Renderer_State,
+	window: Window_State,
 	ctx: runtime.Context,
 	logger: Android_Logger_Arena,
 	some_mem: []byte,
@@ -60,16 +62,22 @@ handle_android_cmd :: proc "c" (app: ^android.android_app, cmd: android.AppCmd) 
 
 	#partial switch cmd {
 	case .INIT_WINDOW:
-		if state.app_ptr.window != nil do state.renderer = initialize_vulkan()
-        case .TERM_WINDOW:
-            cleanup_vulkan(&state.renderer)
+		if state.app_ptr.window != nil {
+			state.window = create_window(state.app_ptr.window)
+			state.renderer = initialize_vulkan(&state.window)
+		}
+	case .TERM_WINDOW:
+		cleanup_vulkan(&state.renderer)
+		cleanup_window(&state.window)
+	case:
+		log.warnf("Unhandled android CMD: %v", cmd)
 	/*
-        case .WINDOW_RESIZED:
-        	// Recreate resources and redraw
-        case .GAINED_FOCUS:
-            state.app_active = true
-        case .LOST_FOCUS:
-            state.app_active = false
+	case .WINDOW_RESIZED:
+		// Recreate resources and redraw
+	case .GAINED_FOCUS:
+	    state.app_active = true
+	case .LOST_FOCUS:
+	    state.app_active = false
 	*/
 	}
 }
@@ -80,18 +88,17 @@ handle_android_input:: proc "c" (app: ^android.android_app, event: ^android.AInp
 
 @(export)
 android_main :: proc "contextless" (state: ^android.android_app) {
-    context = runtime.default_context()
+	context = runtime.default_context()
 
-    app_state: Android_State
+	app_state: Android_State
 
-    app_state.cmd_proc = handle_android_cmd
-    app_state.input_proc = handle_android_input
+	app_state.cmd_proc = handle_android_cmd
+	app_state.input_proc = handle_android_input
 
-    state.userData = &app_state
-    state.onAppCmd = app_state.cmd_proc
-    state.onInputEvent = app_state.input_proc
-    app_state.app_ptr = state
-    app_state = create_window(state.window)
+	state.userData = &app_state
+	state.onAppCmd = app_state.cmd_proc
+	state.onInputEvent = app_state.input_proc
+	app_state.app_ptr = state
 
 	app_state.logger.memory = make([]byte, 100 * mem.Kilobyte)
 
@@ -108,30 +115,38 @@ android_main :: proc "contextless" (state: ^android.android_app) {
 	}
 
 	context.logger = app_state.ctx.logger
-    	app_state.ctx = context
+	context.assertion_failure_proc = android_assert_proc
+	app_state.ctx = context
 
-    for {
-        events: i32
-        source: ^android.android_poll_source
+	for {
+		events: i32
+		source: ^android.android_poll_source
 
-        ident := android.ALooper_pollAll(app_state.app_active ? 0 : -1, nil, &events, cast(^rawptr)&source)
-        for ident >= 0 {
-            if source != nil {
-                source.process(state, source)
-            }
+		ident := android.ALooper_pollAll(app_state.app_active ? 0 : -1, nil, &events, cast(^rawptr)&source)
+		for ident >= 0 {
+			if source != nil do source.process(state, source)
 
-            if state.destroyRequested != 0 {
-		cleanup_vulkan(&app_state.renderer)
-                return
-            }
+			if state.destroyRequested != 0 {
+				cleanup_vulkan(&app_state.renderer)
+				cleanup_window(&app_state.window)
+				return
+			}
 
-            ident = android.ALooper_pollAll(app_state.app_active ? 0 : -1, nil, &events, cast(^rawptr)&source)
-        }
+			ident = android.ALooper_pollAll(app_state.app_active ? 0 : -1, nil, &events, cast(^rawptr)&source)
+		}
 
-        if (app_state.app_active) {
-		log.info("APP ACTIVE")
-        }
-    }
+		if (app_state.app_active) do log.info("APP ACTIVE")
+	}
 }
 }
 
+android_assert_proc :: proc(prefix, message: string, loc: runtime.Source_Code_Location) -> ! {
+	builder := strings.builder_make()
+	fmt.sbprintf(&builder, prefix, " ", message, " AT: ", loc.file_path, ":", loc.line, "|", loc.procedure)
+	mess := strings.to_cstring(&builder)
+	tag := strings.clone_to_cstring(prefix)
+	// Is it even worth to delete?
+
+	android.__android_log_buf_write(.CRASH, .FATAL, "ODIN ASSERT", mess)
+	runtime.trap()
+}

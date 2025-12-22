@@ -12,9 +12,13 @@ create_glfw_window :: proc() -> (window: Window_State) {
 	if !glfw.Init() do log.panic("Glfw not initialized")
 	when VERBOSE_LOG do log.debug("Glfw initialized")
 
+	glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
+	window.handle = glfw.CreateWindow(800, 600, "Odin Renderer", nil, nil)
+
 	return
 }
 cleanup_glfw_window :: proc(state: ^Window_State) {
+	glfw.DestroyWindow(glfw.WindowHandle(state.handle))
 	when VERBOSE_LOG do log.debug("Glfw cleaned up")
 }
 
@@ -34,7 +38,7 @@ Window_State :: struct {
 }
 
 @(private="package")
-create_window :: proc(user_data: rawptr = nil) -> (window: Window_State) {
+create_window :: proc(user_data: rawptr) -> (window: Window_State) {
 	when DESKTOP_BUILD do return create_glfw_window()
 	else do return get_android_window(user_data)
 }

@@ -17,7 +17,8 @@ when DESKTOP_BUILD {
 	}
 } else {
 	REQUESTED_INSTANCE_EXTENSIONS := []cstring{
-
+		"VK_KHR_surface",
+		"VK_KHR_android_surface",
 	}
 	REQUESTED_INSTANCE_LAYERS := []cstring{
 
@@ -53,7 +54,6 @@ Init_Resources_Created_Flags :: bit_set[Init_Resources_Created_Flag]
 
 Renderer_State :: struct {
 	init: Vulkan_Init_State,
-	window: Window_State,
 }
 
 Vulkan_Init_State :: struct {
@@ -109,7 +109,7 @@ Device_State :: struct {
 	graphics, transfer, compute: vk.Queue,
 }
 
-initialize_vulkan :: proc(allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (state: Renderer_State) {
+initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (state: Renderer_State) {
 	load_vklib(&state)
 
 	success := create_instance(&state.init, allocator, temp_allocator, callbacks)
@@ -130,7 +130,7 @@ initialize_vulkan :: proc(allocator := context.allocator, temp_allocator := cont
 		return
 	}
 
-	success = create_surface(&state.init, &state.window, callbacks)
+	success = create_surface(&state.init, window_state, callbacks)
 	if !success {
 		log.fatal("FAiled to create surface")
 		return
@@ -443,7 +443,7 @@ query_device_extensions :: proc(device: vk.PhysicalDevice,layer_name: cstring = 
 }
 
 check_extensions :: proc(requested_ext_names: []cstring, extensions: []vk.ExtensionProperties, allocator := context.allocator) -> (extensions_names: [dynamic]cstring, missing_ext_names: [dynamic]cstring) {
-	if len(requested_ext_names) <= 0 do log.warn("Unexpected behaviour: no requested instance extensions given, this may not be an error, but probably is")
+	if len(requested_ext_names) <= 0 do log.warn("Unexpected behaviour: no requested extensions given, this may not be an error, but probably is")
 
 	extensions_names = make([dynamic]cstring, 0, len(requested_ext_names), allocator)
 	missing_ext_names = make([dynamic]cstring, 0, len(requested_ext_names), allocator)

@@ -34,12 +34,11 @@ when DESKTOP_BUILD do main :: proc () {
 	context.logger = log.create_console_logger(opt = opts, ident = ident)
 	defer log.destroy_console_logger(context.logger)
 
-	state: Renderer_State
 
-	state.window = create_window()
-	defer cleanup_window(&state.window)
+	window_state := create_window(nil)
+	defer cleanup_window(&window_state)
 
-	state = initialize_vulkan()
+	state := initialize_vulkan(&window_state)
 	if !check_all_flags(state.init.resource_flags) {
 		log.fatal("Initalization not completed successfuly")
 		return
