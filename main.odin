@@ -34,8 +34,8 @@ when DESKTOP_BUILD do main :: proc () {
 	context.logger = log.create_console_logger(opt = opts, ident = ident)
 	defer log.destroy_console_logger(context.logger)
 
-	desktop_state := create_glfw_window()
-	defer cleanup_glfw_window(&desktop_state)
+	window_state := create_window()
+	defer cleanup_window(&window_state)
 
 	state := initialize_vulkan()
 	defer cleanup_vulkan(&state)
