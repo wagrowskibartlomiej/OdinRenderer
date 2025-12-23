@@ -8,37 +8,30 @@ import "core:strings"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 
-when DESKTOP_BUILD {
-	REQUESTED_INSTANCE_EXTENSIONS := []cstring{
-
+when !DESKTOP_BUILD do VK_OS_SPECIFIC_SURFACE_EXTENSION_NAME : cstring : "VK_KHR_android_surface"
+else {
+	when ODIN_OS == .Linux {
+		PLACEHOLDER : cstring : "PLACEHOLDER"
+		VK_OS_SPECIFIC_SURFACE_EXTENSION_NAME: cstring = PLACEHOLDER
 	}
-	REQUESTED_INSTANCE_LAYERS := []cstring{
-
-	}
-} else {
-	REQUESTED_INSTANCE_EXTENSIONS := []cstring{
-		"VK_KHR_surface",
-		"VK_KHR_android_surface",
-	}
-	REQUESTED_INSTANCE_LAYERS := []cstring{
-
-	}
+	else when ODIN_OS == .Windows do VK_OS_SPECIFIC_SURFACE_EXTENSION_NAME : cstring : vk.KHR_WIN32_SURFACE_EXTENSION_NAME
+	else do #panic("Vulkan sufrace extensions name for " + ODIN_OS + " not specified")
 }
 
-when DESKTOP_BUILD {
-	REQUESTED_DEVICE_EXTENSIONS := []cstring{
 
-	}
-	REQUESTED_DEVICE_LAYERS := []cstring{
+REQUESTED_INSTANCE_EXTENSIONS := []cstring{
+	vk.KHR_SURFACE_EXTENSION_NAME,
+	VK_OS_SPECIFIC_SURFACE_EXTENSION_NAME,
+}
+REQUESTED_INSTANCE_LAYERS := []cstring{
 
-	}
-} else {
-	REQUESTED_DEVICE_EXTENSIONS := []cstring{
+}
 
-	}
-	REQUESTED_DEVICE_LAYERS := []cstring{
+REQUESTED_DEVICE_EXTENSIONS := []cstring{
+	vk.KHR_SWAPCHAIN_EXTENSION_NAME,
+}
+REQUESTED_DEVICE_LAYERS := []cstring{
 
-	}
 }
 
 // Flags that are used to check which initalization resource were created, so when it's cleanup time,
@@ -224,27 +217,14 @@ create_instance :: proc(state: ^Vulkan_Init_State, allocator := context.allocato
 	missing_extensions: [dynamic]cstring
 	defer delete(missing_extensions)
 
-	when DESKTOP_BUILD {
-		ext := slice.clone_to_dynamic(REQUESTED_INSTANCE_EXTENSIONS, temp_allocator)
-		defer delete(ext)
-		glfw_ext := glfw.GetRequiredInstanceExtensions()
+	when ODIN_OS == .Linux do get_khr_ext_linux()
 
-		for e in glfw_ext do append(&ext, e)
-			
-		for e, i in ext {
-			if i == 0 do log.info("Requested instance extensions:")
-			log.infof("%v. %v", i+1, e)
-		}
-
-		state.instance.enabled_extensions_names, missing_extensions = check_extensions(ext[:], state.instance.available_extensions, allocator)
-	} else {
-		for e, i in REQUESTED_INSTANCE_EXTENSIONS {
-			if i == 0 do log.info("Requested instance extensions:")
-			log.infof("%v. %v", i+1, e)
-		}
-
-		state.instance.enabled_extensions_names, missing_extensions = check_extensions(REQUESTED_INSTANCE_EXTENSIONS, state.instance.available_extensions, allocator)
+	for e, i in REQUESTED_INSTANCE_EXTENSIONS {
+		if i == 0 do log.info("Requested instance extensions:")
+		log.infof("%v. %v", i+1, e)
 	}
+
+	state.instance.enabled_extensions_names, missing_extensions = check_extensions(REQUESTED_INSTANCE_EXTENSIONS, state.instance.available_extensions, allocator)
 
 	defer if !success do delete(state.instance.enabled_extensions_names)
 
@@ -308,6 +288,28 @@ cleanup_instance :: proc(state: ^Vulkan_Init_State, allocator := context.allocat
 
 	state.resource_flags &~= {.Instance}
 	when VERBOSE_LOG do log.debug("Instance resource flag unset")
+}
+
+
+// This proc is needed to get proper surface extension name without using glfw.GetRequiredInstanceExtensions
+@(private="file")
+get_khr_ext_linux :: proc() {
+	ext := glfw.GetRequiredInstanceExtensions()
+	req: cstring
+	for e in ext {
+		if e == vk.KHR_XCB_SURFACE_EXTENSION_NAME ||
+		e == vk.KHR_XLIB_SURFACE_EXTENSION_NAME ||
+		e == vk.KHR_WAYLAND_SURFACE_EXTENSION_NAME {
+			for &req_ext in REQUESTED_INSTANCE_EXTENSIONS {
+				if req_ext == VK_OS_SPECIFIC_SURFACE_EXTENSION_NAME {
+					req_ext = e
+					req = req_ext
+				}
+
+			}
+		}
+	}
+	if req == PLACEHOLDER do log.fatal("OS Surface extension not set")
 }
 
 query_instance_extensions :: proc(layer_name: cstring = nil, allocator := context.allocator) -> (ext: []vk.ExtensionProperties, success: bool) {
