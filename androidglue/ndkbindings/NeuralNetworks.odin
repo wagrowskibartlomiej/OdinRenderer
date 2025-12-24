@@ -1,3 +1,4 @@
+#+build linux
 package android
 
 foreign import android "system:android"

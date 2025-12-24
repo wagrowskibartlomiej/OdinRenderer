@@ -1,3 +1,5 @@
+#+build linux
+
 package android
 
 Keycode :: enum i32 {

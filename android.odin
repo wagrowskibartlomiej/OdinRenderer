@@ -1,3 +1,4 @@
+#+build linux
 package render
 
 import "core:log"
@@ -9,7 +10,6 @@ import "core:c"
 
 import android "./androidglue/ndkbindings"
 
-when !DESKTOP_BUILD {
 Android_State :: struct {
 	app_ptr: ^android.android_app,
 	app_active: bool,
@@ -137,7 +137,6 @@ android_main :: proc "contextless" (state: ^android.android_app) {
 
 		if (app_state.app_active) do log.info("APP ACTIVE")
 	}
-}
 }
 
 android_assert_proc :: proc(prefix, message: string, loc: runtime.Source_Code_Location) -> ! {

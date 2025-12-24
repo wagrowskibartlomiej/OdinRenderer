@@ -1,3 +1,5 @@
+#+build linux
+
 package camerandk
 
 acamera_metadata_section_t :: enum {

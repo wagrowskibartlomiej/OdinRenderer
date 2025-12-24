@@ -1,3 +1,5 @@
+#+build linux
+
 package aaudio
 
 foreign import aaudio "system:aaudio"
