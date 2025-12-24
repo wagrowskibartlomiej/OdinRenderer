@@ -123,7 +123,7 @@ initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allo
 		return
 	}
 
-	success = create_surface(&state.init, window_state, callbacks)
+	success = create_surface(&state.init, window_state, allocator, callbacks)
 	if !success {
 		log.fatal("FAiled to create surface")
 		return
@@ -144,7 +144,7 @@ cleanup_vulkan :: proc(state: ^Renderer_State, allocator := context.allocator, c
 
 load_vklib :: proc(state: ^Renderer_State) {
 	when ODIN_OS == .Linux do vk_lib_name :: "libvulkan.so"
-	else when ODIN_OS == .Windows do vk_lib_name :: "1-vulkan.dll"
+	else when ODIN_OS == .Windows do vk_lib_name :: "vulkan-1.dll"
 	else do #panic("Vulkan lib name file not specified for " + ODIN_OS + " OS")
 
 	loaded: bool
@@ -291,6 +291,7 @@ cleanup_instance :: proc(state: ^Vulkan_Init_State, allocator := context.allocat
 }
 
 
+when ODIN_OS == .Linux {
 // This proc is needed to get proper surface extension name without using glfw.GetRequiredInstanceExtensions
 @(private="file")
 get_khr_ext_linux :: proc() {
@@ -310,6 +311,7 @@ get_khr_ext_linux :: proc() {
 		}
 	}
 	if req == PLACEHOLDER do log.fatal("OS Surface extension not set")
+}
 }
 
 query_instance_extensions :: proc(layer_name: cstring = nil, allocator := context.allocator) -> (ext: []vk.ExtensionProperties, success: bool) {
