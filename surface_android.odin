@@ -9,6 +9,8 @@ import vk "vendor:vulkan"
 
 import android "androidglue/ndkbindings"
 
+when !DESKTOP_BUILD {
+
 VkAndroidSurfaceCreateFlagKHR :: enum vk.Flags {}
 VkAndroidSurfaceCreateFlagsKHR :: distinct bit_set[VkAndroidSurfaceCreateFlagKHR; vk.Flags]
 
@@ -47,3 +49,4 @@ android_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_
 	return
 }
 
+}

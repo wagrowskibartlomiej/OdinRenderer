@@ -14,6 +14,7 @@ Surface_State :: struct {
 
 @(private="package")
 create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+	if .Surface in state.resource_flags do log.warn("Surface creation called when resource flag is set, possiible error")
 
 	when DESKTOP_BUILD do success = glfw_create_surface(state, window_state, callbacks)
 	else do success = android_create_surface(state, window_state, callbacks)
@@ -25,6 +26,11 @@ create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, a
 
 @(private="package")
 cleanup_surface :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallbacks = nil) {
+	if .Surface not_in state.resource_flags {
+		log.warn("Called surface cleanup when resource flag is unset")
+		return
+	}
+
 	vk.DestroySurfaceKHR(state.instance.handle, state.surface.handle, callbacks)
 	when VERBOSE_LOG {
 		when DESKTOP_BUILD do log.debug("GLFW surface destroyed")

@@ -10,6 +10,8 @@ import "core:c"
 
 import android "./androidglue/ndkbindings"
 
+when !DESKTOP_BUILD {
+
 Android_State :: struct {
 	app_ptr: ^android.android_app,
 	app_active: bool,
@@ -148,4 +150,6 @@ android_assert_proc :: proc(prefix, message: string, loc: runtime.Source_Code_Lo
 
 	android.__android_log_assert(nil, "ODIN ASSERT", mess)
 	runtime.trap()
+}
+
 }

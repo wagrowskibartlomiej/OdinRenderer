@@ -1,5 +1,10 @@
 package render
 
+
+//TODO: Fix order or initalization, surface creation should occur after instance creation,
+//	so that we can check for presentation suport, color formats etc. when picking physical device.
+//	Refactor incoming.
+
 import "core:log"
 import "core:slice"
 import "core:dynlib"
@@ -42,6 +47,7 @@ Init_Resources_Created_Flag :: enum {
 	Physical_Device,
 	Device,
 	Surface,
+	Swapchain,
 }
 Init_Resources_Created_Flags :: bit_set[Init_Resources_Created_Flag]
 
@@ -54,9 +60,10 @@ Vulkan_Init_State :: struct {
 	vklib: dynlib.Library,
 	resource_flags: Init_Resources_Created_Flags,
 	instance: Instance_State,
-	physical_devices: Physical_Devices,
+	physical_devices: Physical_Devices_State,
 	device: Device_State,
 	surface: Surface_State,
+	swapchain: Swapchain_State,
 }
 
 Layers_Extensions_Properties :: struct {
@@ -71,24 +78,27 @@ Instance_State :: struct {
 	using _: Layers_Extensions_Properties,
 }
 
-Physical_Devices :: struct {
-	detected: #soa []Physical_Device,
-	active: Active_Physical_Device,
+Physical_Devices_State :: struct {
+	supported: [dynamic]Supported_Physical_Device,
+	active: ^Supported_Physical_Device,
 }
 
 Physical_Device :: struct {
 	handle: vk.PhysicalDevice,
-	name: string,
-	score: int,
+	name: cstring,
 }
 
-Active_Physical_Device :: struct {
-	device: #soa^#soa[]Physical_Device,
+Supported_Physical_Device :: struct {
+	using _: Physical_Device,
+	score: int,
 	features: vk.PhysicalDeviceFeatures,
 	properties: vk.PhysicalDeviceProperties,
 	memory_properties: vk.PhysicalDeviceMemoryProperties,
-	queues_properites: []vk.QueueFamilyProperties,
+	formats: []vk.SurfaceFormatKHR,
+	queues_properties: []vk.QueueFamilyProperties,
 	queue_indexes: Queue_Indexes,
+	capabilites: vk.SurfaceCapabilitiesKHR,
+	present_modes: []vk.PresentModeKHR,
 	using _: Layers_Extensions_Properties,
 }
 
@@ -111,6 +121,12 @@ initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allo
 		return 
 	}
 
+	success = create_surface(&state.init, window_state, allocator, callbacks)
+	if !success {
+		log.fatal("FAiled to create surface")
+		return
+	}
+
 	success = pick_physical_device(&state.init, allocator, temp_allocator)
 	if !success {
 		log.fatal("Failed to pick physical device ")
@@ -123,18 +139,22 @@ initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allo
 		return
 	}
 
-	success = create_surface(&state.init, window_state, allocator, callbacks)
+	success = create_swapchain(&state.init, window_state.handle, {}, callbacks)
 	if !success {
-		log.fatal("FAiled to create surface")
+		log.fatal("Failed to create swapchain")
 		return
 	}
-	
+
 
 	when VERBOSE_LOG do log.debug("Initialization successful")
 	return
 }
 
 cleanup_vulkan :: proc(state: ^Renderer_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
+	// Flags checks are here to not print warning when exiting early, 
+	// it probably won't be a bottleneck anyway 
+
+	if .Swapchain in state.init.resource_flags do cleanup_swapchain(&state.init, callbacks)
 	if .Surface in state.init.resource_flags do cleanup_surface(&state.init, callbacks)
 	if .Device in state.init.resource_flags do cleanup_device(&state.init, allocator, callbacks)
 	if .Physical_Device in state.init.resource_flags do cleanup_physical_devices(&state.init, allocator)
@@ -143,6 +163,8 @@ cleanup_vulkan :: proc(state: ^Renderer_State, allocator := context.allocator, c
 }
 
 load_vklib :: proc(state: ^Renderer_State) {
+	if .Library in state.init.resource_flags do log.warn("Library loading called when resource flag is set, possible error")
+
 	when ODIN_OS == .Linux do vk_lib_name :: "libvulkan.so"
 	else when ODIN_OS == .Windows do vk_lib_name :: "vulkan-1.dll"
 	else do #panic("Vulkan lib name file not specified for " + ODIN_OS + " OS")
@@ -160,10 +182,13 @@ load_vklib :: proc(state: ^Renderer_State) {
 
 	vk.load_proc_addresses_global(vk_get_instance_proc_addr_name)
 	when VERBOSE_LOG do log.debug("Global procedure addresses loaded")
-	log.debug("Vulkan initalization start")
 }
 
 unload_vklib :: proc(state: ^Renderer_State) {
+	if .Library not_in state.init.resource_flags {
+		log.warn("Library unloading called when resource flag is unset")
+		return
+	}
 	unloaded := dynlib.unload_library(state.init.vklib)
 	if !unloaded do log.errorf("Failed to unload Vulkan library: %v", dynlib.last_error())
 	when VERBOSE_LOG do log.debug("Unloaded Vulkan library")
@@ -173,6 +198,7 @@ unload_vklib :: proc(state: ^Renderer_State) {
 }
 
 create_instance :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+	if .Instance in state.resource_flags do log.warn("Called instance creation when resource flag is set, possible error")
 	// Check for 1.0 implementation
 	_, found := dynlib.symbol_address(state.vklib, "vkEnumerateInstanceVersion")
 	if !found do log.info("Vulkan instance version: 1.0.0")
@@ -217,7 +243,7 @@ create_instance :: proc(state: ^Vulkan_Init_State, allocator := context.allocato
 	missing_extensions: [dynamic]cstring
 	defer delete(missing_extensions)
 
-	when ODIN_OS == .Linux do get_khr_ext_linux()
+	when ODIN_OS == .Linux && DESKTOP_BUILD do get_khr_ext_linux()
 
 	for e, i in REQUESTED_INSTANCE_EXTENSIONS {
 		if i == 0 do log.info("Requested instance extensions:")
@@ -276,6 +302,10 @@ create_instance :: proc(state: ^Vulkan_Init_State, allocator := context.allocato
 }
 
 cleanup_instance :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
+	if .Instance not_in state.resource_flags {
+		log.warn("Called instance cleanup when resource flag is unset")
+		return
+	}
 	vk.DestroyInstance(state.instance.handle, callbacks)
 	when VERBOSE_LOG do log.debug("Instance destroyed")
 
@@ -291,7 +321,7 @@ cleanup_instance :: proc(state: ^Vulkan_Init_State, allocator := context.allocat
 }
 
 
-when ODIN_OS == .Linux {
+when ODIN_OS == .Linux && DESKTOP_BUILD {
 // This proc is needed to get proper surface extension name without using glfw.GetRequiredInstanceExtensions
 @(private="file")
 get_khr_ext_linux :: proc() {
@@ -385,9 +415,9 @@ query_instance_layers :: proc(allocator := context.allocator) -> (lay: []vk.Laye
 }
 
 //NOTE: Device layers are deprecated, but in theory for compatibility reasons it should be used 
-query_device_layers :: proc(device: ^vk.PhysicalDevice, allocator := context.allocator) -> (lay: []vk.LayerProperties, success: bool) {
+query_device_layers :: proc(device: vk.PhysicalDevice, allocator := context.allocator) -> (lay: []vk.LayerProperties, success: bool) {
 	count: u32
-	result := vk.EnumerateDeviceLayerProperties(device^, &count, nil)
+	result := vk.EnumerateDeviceLayerProperties(device, &count, nil)
 
 	#partial switch result {
 	case .SUCCESS:
@@ -404,7 +434,7 @@ query_device_layers :: proc(device: ^vk.PhysicalDevice, allocator := context.all
 	lay = make([]vk.LayerProperties, count, allocator)
 	defer if !success do delete(lay, allocator)
 
-	result = vk.EnumerateDeviceLayerProperties(device^, &count, raw_data(lay))
+	result = vk.EnumerateDeviceLayerProperties(device, &count, raw_data(lay))
 	#partial switch result {
 	case .SUCCESS:
 		when VERBOSE_LOG do log.debug("(2) Device layers enumeration succeded")
@@ -421,7 +451,7 @@ query_device_layers :: proc(device: ^vk.PhysicalDevice, allocator := context.all
 	return
 }
 
-query_device_extensions :: proc(device: vk.PhysicalDevice,layer_name: cstring = nil, allocator := context.allocator) -> (ext: []vk.ExtensionProperties, success: bool) {
+query_device_extensions :: proc(device: vk.PhysicalDevice, layer_name: cstring = nil, allocator := context.allocator) -> (ext: []vk.ExtensionProperties, success: bool) {
 	count: u32
 	result := vk.EnumerateDeviceExtensionProperties(device, layer_name, &count, nil)
 	#partial switch result {
@@ -505,6 +535,7 @@ I do not see it that important as when targeting PCs
 ************************************************************************/
 
 pick_physical_device :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator) -> (success: bool) {
+	if .Physical_Device in state.resource_flags do log.warn("Called physical device picking when resource flag is set, possible error")
 	count: u32
 
 	result := vk.EnumeratePhysicalDevices(state.instance.handle, &count, nil)
@@ -523,10 +554,6 @@ pick_physical_device :: proc(state: ^Vulkan_Init_State, allocator := context.all
 	devices := make([]vk.PhysicalDevice, count, temp_allocator)
 	defer delete(devices, temp_allocator)
 
-	state.physical_devices.detected = make(#soa[]Physical_Device, count, allocator)
-	defer if !success do delete(state.physical_devices.detected, allocator)
-
-
 	result = vk.EnumeratePhysicalDevices(state.instance.handle, &count, raw_data(devices))
 	#partial switch result {
 	case .SUCCESS:
@@ -538,64 +565,13 @@ pick_physical_device :: proc(state: ^Vulkan_Init_State, allocator := context.all
 		return
 	}
 
-	log.assert(count > 0, "(2) Queried physical device count is zero")
+	unsupported := evaluate_physical_devices(devices, state.surface.handle, &state.physical_devices, allocator, temp_allocator)
+	defer delete(unsupported)
 
-	// Copy the handles for custom data structure
-	for d, i in devices do state.physical_devices.detected[i].handle = d
-
-	state.physical_devices.active = pick_best_device_based_on_score(&state.physical_devices.detected, allocator, temp_allocator)
-	log.infof("Picked physical device: %v", state.physical_devices.active.device.name)
-
-	enumerated: bool
-
-	state.physical_devices.active.available_layers, enumerated = query_device_layers(&state.physical_devices.active.device.handle, allocator)
-	if !enumerated do return
-	defer if !success do delete(state.physical_devices.active.available_layers, allocator)
-
-	for &l, i in state.physical_devices.active.available_layers {
-		if i == 0 do log.infof("Available device layers (%v):", state.physical_devices.active.device.name)
-		log.infof("%v. %v", i+1, cstring(raw_data(&l.layerName)))
+	for dev, i in unsupported {
+		if i == 0 do log.info("Unsupported device(s):")
+		log.infof("%v. %v", i+1, dev.name)
 	}
-
-	for l, i in REQUESTED_DEVICE_LAYERS {
-		if i == 0 do log.info("Requested device layers:")
-		log.infof("%v. %v", i+1, l)
-	}
-
-	state.physical_devices.active.available_extensions, enumerated = query_device_extensions(state.physical_devices.active.device.handle, allocator = allocator)
-	if !enumerated do return
-	defer if !success do delete(state.physical_devices.active.available_extensions, allocator)
-
-	for &e, i in state.physical_devices.active.available_extensions {
-		if i == 0 do log.infof("Available device extensions (%v):", state.physical_devices.active.device.name)
-		log.infof("%v. %v", i+1, cstring(raw_data(&e.extensionName)))
-	}
-
-	for e, i in REQUESTED_DEVICE_EXTENSIONS {
-		if i == 0 do log.info("Requested device extensions:")
-		log.infof("%v. %v", i+1, e)
-	}
-
-	missing_layers: [dynamic]cstring
-	defer delete(missing_layers)
-	state.physical_devices.active.enabled_layers_names, missing_layers = check_layers(REQUESTED_DEVICE_LAYERS, state.physical_devices.active.available_layers, allocator)
-
-	missing_extensions: [dynamic]cstring
-	defer delete(missing_extensions)
-	state.physical_devices.active.enabled_extensions_names, missing_extensions = check_extensions(REQUESTED_DEVICE_EXTENSIONS, state.physical_devices.active.available_extensions, allocator)
-
-
-	for l, i in missing_layers {
-		if i == 0 do log.error("Requested layers missing:")
-		log.errorf("%v. %v", i, l)
-	}
-
-	for e, i in missing_extensions {
-		if i == 0 do log.error("Requested extensions missing:")
-		log.errorf("%v. %v", i, e)
-	}
-
-	if len(missing_layers) > 0 || len(missing_extensions) > 0 do return
 
 	state.resource_flags |= {.Physical_Device}
 	when VERBOSE_LOG do log.debug("Physical device resources flag set")
@@ -605,93 +581,212 @@ pick_physical_device :: proc(state: ^Vulkan_Init_State, allocator := context.all
 }
 
 cleanup_physical_devices :: proc(state: ^Vulkan_Init_State, allocator := context.allocator) {
-	using state.physical_devices
+	if .Physical_Device not_in state.resource_flags {
+		log.warn("Called physical device cleanup while resource flag is unset")
+		return
+	}
 
-	for d in detected do delete(d.name, allocator)
-	when VERBOSE_LOG do log.debug("Deleted allocated physical devices names")
+	for d in state.physical_devices.supported {
+		delete (d.queues_properties, allocator)
+		delete (d.available_extensions, allocator)
+		delete (d.available_layers, allocator)
+		delete (d.present_modes, allocator)
+		delete (d.formats, allocator)
+		delete (d.enabled_extensions_names)
+		delete (d.enabled_layers_names)
+	}
+	delete (state.physical_devices.supported)
 
-	delete(detected)
-	when VERBOSE_LOG do log.debug("Deleted all detected physical devices")
-
-	delete(active.queues_properites, allocator)
-	when VERBOSE_LOG do log.debug("Deleted active physical device queue family properties")
-
-	delete(active.enabled_extensions_names)
-	delete(active.enabled_layers_names)
-
-	delete(active.available_extensions, allocator)
-	delete(active.available_layers, allocator)
-	when VERBOSE_LOG do log.debug("Active device resources released")
-
-	active = {}
-	when VERBOSE_LOG do log.debug("Zeroed active physical device struct")
+	state.physical_devices.active = nil
 
 	state.resource_flags &~= {.Physical_Device}
 	when VERBOSE_LOG do log.debug("Physical device resource flag unset")
 }
 
 //WARN: Procedure allocates string names with given allocator, names then need to be freed accordingly
-pick_best_device_based_on_score :: proc(devices: ^#soa[]Physical_Device, allocator := context.allocator, temp_allocator := context.temp_allocator) -> (active: Active_Physical_Device) {
+evaluate_physical_devices :: proc(devices: []vk.PhysicalDevice, surface: vk.SurfaceKHR, devices_state: ^Physical_Devices_State, allocator := context.allocator, temp_allocator := context.temp_allocator) -> (unsupported: [dynamic]Physical_Device) {
 	log.assert(len(devices)>0, "Length of devices is zero")
 
-	features: vk.PhysicalDeviceFeatures
-	properties: vk.PhysicalDeviceProperties
-	memory_properties: vk.PhysicalDeviceMemoryProperties
-	queue_familiy_properties: []vk.QueueFamilyProperties
+	unsupported = make([dynamic]Physical_Device, allocator)
+	devices_state.supported = make([dynamic]Supported_Physical_Device, allocator)
 
-	last_highest_score: int
-
-
+	// Check devices properties, append to supproted list if it's suitable for use and meets the requirements,
+	// if not, add to unsupported list and delete all details that will not be in use
 	for &d, i in devices {
-		log.assert(d.handle != nil, "Physical device handle is nil, when expected to be a valid VkPhysicalDevice")
+		log.assert(d != nil, "Physical device handle is nil, when expected to be a valid VkPhysicalDevice")
 
-		queue_counter: u32
+		success: bool
+		supported_state: Supported_Physical_Device
 
-		vk.GetPhysicalDeviceFeatures(d.handle, &features)
-		vk.GetPhysicalDeviceProperties(d.handle, &properties)
-		vk.GetPhysicalDeviceMemoryProperties(d.handle, &memory_properties)
+		// Get the minimal properties to make sure the device meets the requirements
+		using supported_state
+		handle = d
 
-		//copy the name with allocator so that it can be stored without storing all other properties
-		d.name = strings.clone_from_cstring(cstring(raw_data(&properties.deviceName)), allocator)
+		// Get name for every device, to make it identifiable
+		vk.GetPhysicalDeviceProperties(handle, &properties)
+		name = strings.unsafe_string_to_cstring(string(properties.deviceName[:]))
+		defer if !success do append(&unsupported, Physical_Device{handle, strings.clone_to_cstring(string(name), allocator)})
 
-		vk.GetPhysicalDeviceQueueFamilyProperties(d.handle, &queue_counter, nil)
-		log.assert(queue_counter > 0, "(1) Queue counter is less than one")
+		available_extensions, success = query_device_extensions(handle, nil, allocator)
+		if !success {
+			log.warnf("[%v] Cannot determine available device extensions", name)
+			continue
+		}
+		defer if !success do delete(available_extensions, allocator)
 
-		//Query currents device queues, then check for results and then either discard or overwrite the current active one,
-		//so delete the one that is set in active device
-		queue_familiy_properties = make([]vk.QueueFamilyProperties, queue_counter, temp_allocator) 
+		available_layers, success = query_device_layers(handle, allocator)
+		if !success {
+			log.warnf("[%v] Cannot determine available device layers", name)
+			continue
+		}
+		defer if !success do delete(available_layers, allocator)
 
-		vk.GetPhysicalDeviceQueueFamilyProperties(d.handle, &queue_counter, raw_data(queue_familiy_properties))
-		log.assert(queue_counter > 0, "(2) Queue counter is less than one")
+		counter: u32
 
-		indexes := get_physical_device_queues_indexes(queue_familiy_properties)
+		vk.GetPhysicalDeviceQueueFamilyProperties(handle, &counter, nil)
 
-		// Better score for async queues
-		if indexes.transfer != indexes.graphics do d.score += 1000
-		if indexes.compute != indexes.graphics do d.score += 500
-	
-		when DESKTOP_BUILD {
-			// just to be sure for desktop that the better one will be picked
-			if properties.deviceType == .DISCRETE_GPU do d.score += 10000
-			d.score += int(properties.limits.maxImageDimension2D)
+		queues_properties = make([]vk.QueueFamilyProperties, counter, allocator)
+		defer if !success do delete(queues_properties, allocator)
+
+		vk.GetPhysicalDeviceQueueFamilyProperties(handle, &counter, raw_data(queues_properties))
+		
+
+		// It device does not meet requirements add it to unsupported list, then continue to evaluate rest
+		success = physical_device_evaluation(&supported_state, surface, allocator)
+		if !success do continue
+
+		// Get the rest of the properties NOTE: SET DEVICE AS NOT SUPPORTED WHEN ERROR OCCURS
+		vk.GetPhysicalDeviceFeatures(handle, &features)
+		vk.GetPhysicalDeviceMemoryProperties(handle, &memory_properties)
+		vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(handle, surface, &capabilites)
+
+
+		// Surface formats
+		result := vk.GetPhysicalDeviceSurfaceFormatsKHR(handle, surface, &counter, nil)
+		#partial switch result {
+		case .SUCCESS:
+			when VERBOSE_LOG do log.debugf("(1)[%v] Querying of surface formats succeeded", name)
+		case .INCOMPLETE:
+			log.warnf("(1)[%v] Not all surface formats were queried, some functionality may not work")
+		case:
+			log.errorf("(1)[%v] Surface format query failed (device counts as not supported): %v", name, result)
+			success = false
+			continue
 		}
 
-		// Just in case always get the first one as the active device
-		if d.score > last_highest_score || i == 0 {
-			last_highest_score = d.score
-			active.device = &devices[i]
-			active.features = features
-			active.properties = properties
-			active.memory_properties = memory_properties
-			active.queues_properites = slice.clone(queue_familiy_properties, allocator)
-			active.queue_indexes = indexes
+		formats = make([]vk.SurfaceFormatKHR, counter, allocator)
+		defer if !success do delete(formats, allocator)
+
+		result = vk.GetPhysicalDeviceSurfaceFormatsKHR(handle, surface, &counter, raw_data(formats))
+		#partial switch result {
+		case .SUCCESS:
+			when VERBOSE_LOG do log.debugf("(2)[%v] Querying of surface formats succeeded", name)
+		case .INCOMPLETE:
+			log.warnf("(2)[%v] Not all surface formats were queried, some functionality may not work", name)
+		case:
+			log.errorf("(2)[%v] Surface format query failed (device counts as not supported): %v", name, result)
+			success = false
+			continue
 		}
+
+		// Presentation modes
+		result = vk.GetPhysicalDeviceSurfacePresentModesKHR(handle, surface, &counter, nil)
+		#partial switch result {
+		case .SUCCESS:
+			when VERBOSE_LOG do log.debugf("(1)[%v] Querying of surface presentation modes succeeded", name)
+		case .INCOMPLETE:
+			log.warnf("(1)[%v] Not all surface presentation modes were queried, some functionality may not work")
+		case:
+			log.errorf("(1)[%v] Surface presentation modes query failed (device counts as not supported): %v", name, result)
+			success = false
+			continue
+		}
+
+		present_modes = make([]vk.PresentModeKHR, counter, allocator)
+		defer if !success do delete(present_modes, allocator)
+
+		result = vk.GetPhysicalDeviceSurfacePresentModesKHR(handle, surface, &counter, raw_data(present_modes))
+		#partial switch result {
+		case .SUCCESS:
+			when VERBOSE_LOG do log.debugf("(2)[%v] Querying of surface presentation modes succeeded", name)
+		case .INCOMPLETE:
+			log.warnf("(2)[%v] Not all surface presentation modes were queried, some functionality may not work")
+		case:
+			log.errorf("(2)[%v] Surface presentation modes query failed (device counts as not supported): %v", name, result)
+			success = false
+			continue
+		}
+
+		score = physical_device_score_rating(&supported_state)
+
+		append(&devices_state.supported, supported_state)
+		success = true // set true to not delete the recources with defered statements
+	}
+
+	log.ensuref(len(devices_state.supported) >= 1, "No supported physical devices detected, cannot continue")
+
+	slice.sort_by_cmp(devices_state.supported[:], sort_by_score)
+
+	// Get the one active with the best score
+	devices_state.active = &devices_state.supported[0]
+	log.infof("Picked device: %v (score: %v)", devices_state.active.name, devices_state.active.score)
+
+	return
+}
+
+// WARN: Allocates the extensions and layers names, in passed state struct, using given allocator ONLY IF the device is supported
+physical_device_evaluation :: proc(device: ^Supported_Physical_Device, surface: vk.SurfaceKHR, allocator := context.allocator) -> (supported: bool) {
+	supported = true // set initally to true, so check can be made at the end to log everything that is incorrect
+	device.queue_indexes = physical_device_evaluate_queues(device.queues_properties, surface, device.handle)
+	if device.queue_indexes.graphics == -1 {
+		log.warnf("[%v] No available graphics queue with presentation support", device.name)
+		supported = false
+	}
+
+	missing_ext_names: [dynamic]cstring
+	device.enabled_extensions_names, missing_ext_names = check_extensions(REQUESTED_DEVICE_EXTENSIONS, device.available_extensions, allocator)
+	defer if !supported do delete(device.enabled_extensions_names)
+	defer delete(missing_ext_names)
+	if len(missing_ext_names) > 0 {
+		for ext, i in missing_ext_names {
+			if i == 0 do log.warn("[%v] Missing requested extension(s):", device.name)
+			log.warnf("\t%v. %v", i+1, ext)
+		}
+		supported = false
+	}
+
+	missing_lay_names: [dynamic]cstring
+	device.enabled_layers_names, missing_lay_names = check_layers(REQUESTED_DEVICE_LAYERS, device.available_layers, allocator)
+	defer if !supported do delete(device.enabled_layers_names)
+	defer delete(missing_lay_names)
+	if len(missing_lay_names) > 0 {
+		for lay, i in missing_lay_names {
+			if i == 0 do log.warn("[%v] Missing requested layer(s):", device.name)
+			log.warnf("\t%v. %v", i+1, lay)
+		}
+		supported = false
 	}
 
 	return
 }
 
-get_physical_device_queues_indexes :: proc(queue_properties: []vk.QueueFamilyProperties) -> (indexes: Queue_Indexes) {
+physical_device_score_rating :: proc(device: ^Supported_Physical_Device) -> (score: int) {
+	// Better score for async queues
+	if device.queue_indexes.transfer != device.queue_indexes.graphics do score += 1000
+	if device.queue_indexes.compute != device.queue_indexes.graphics do score += 500
+
+	if device.properties.deviceType == .DISCRETE_GPU do score += 10000
+	score += int(device.properties.limits.maxImageDimension2D)
+
+	return
+}
+sort_by_score :: proc(i, j: Supported_Physical_Device) -> slice.Ordering {
+	if i.score > j.score do return .Greater
+	else if i.score < j.score do return .Less
+	else do return .Equal
+}
+
+physical_device_evaluate_queues :: proc(queue_properties: []vk.QueueFamilyProperties, surface: vk.SurfaceKHR, device: vk.PhysicalDevice) -> (indexes: Queue_Indexes) {
 	indexes.compute = -1
 	indexes.graphics = -1
 	indexes.transfer = -1
@@ -700,11 +795,17 @@ get_physical_device_queues_indexes :: proc(queue_properties: []vk.QueueFamilyPro
 	dedicated_transfer_index := -1
 	async_index := -1
 
+	presentation_supported: b32
+
 	// find dedicated and async queues first
 	for q, i in queue_properties {
 		flags := q.queueFlags
 
-		if .GRAPHICS in flags && indexes.graphics == -1 do indexes.graphics = i
+		if .GRAPHICS in flags && indexes.graphics == -1 {
+			result := vk.GetPhysicalDeviceSurfaceSupportKHR(device, u32(i), surface, &presentation_supported)
+			if result != .SUCCESS do log.warnf("Physical device surface support error: %v", result)
+			if presentation_supported do indexes.graphics = i
+		}
 
 		if .COMPUTE in flags && .GRAPHICS not_in flags && dedicated_compute_index == -1 do dedicated_compute_index = i
 
@@ -729,6 +830,7 @@ get_physical_device_queues_indexes :: proc(queue_properties: []vk.QueueFamilyPro
 }
 
 create_device :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+	if .Device in state.resource_flags do log.warn("Called device creation when resource flag is set, possible error")
 	queue_priority_max: f32 = 1
 
 	// using to make indexes easier to access
@@ -802,15 +904,15 @@ create_device :: proc(state: ^Vulkan_Init_State, allocator := context.allocator,
 		ppEnabledLayerNames= raw_data(state.physical_devices.active.enabled_layers_names),
 	}
 
-	result := vk.CreateDevice(state.physical_devices.active.device.handle, &create_info, callbacks, &state.device.handle)
+	result := vk.CreateDevice(state.physical_devices.active.handle, &create_info, callbacks, &state.device.handle)
 	if result != .SUCCESS {
 		log.errorf("Device creation error: %v", result)
 		return
 	}
 
-	when VERBOSE_LOG do for q, i in state.physical_devices.active.queues_properites {
+	when VERBOSE_LOG do for q, i in state.physical_devices.active.queues_properties {
 		if i == 0 do log.info("Available queue families:")
-		log.infof("Usage: %v, queue count: %v", q.queueFlags, q.queueCount)
+		log.infof("%v. Usage: %v, queue count: %v", i+1, q.queueFlags, q.queueCount)
 	}
 
 	// Get graphics queue
@@ -822,7 +924,7 @@ create_device :: proc(state: ^Vulkan_Init_State, allocator := context.allocator,
 		vk.GetDeviceQueue(state.device.handle, u32(transfer), 0, &state.device.transfer)
 		if transfer != compute && compute != graphics {
 			vk.GetDeviceQueue(state.device.handle, u32(compute), 0, &state.device.compute) // G & T & C
-			when VERBOSE_LOG do log.debug("Queue combination detecetd: dedicated transfer and copmute queue")
+			when VERBOSE_LOG do log.debug("Queue combination detecetd: dedicated transfer and compute queue")
 		}
 		else if transfer == compute {
 			state.device.compute = state.device.transfer // T|C & G
@@ -844,6 +946,7 @@ create_device :: proc(state: ^Vulkan_Init_State, allocator := context.allocator,
 			when VERBOSE_LOG do log.debug("Queue combination detecetd: no dedicated or async queues")
 		}
 	}
+	when VERBOSE_LOG do log.debugf("Chosen queue indexes: (G) %v, (T) %v, (C) %v", graphics, transfer, compute)
 
 	state.resource_flags |= {.Device}
 	when VERBOSE_LOG do log.debug("Device resources flag set")
@@ -853,6 +956,11 @@ create_device :: proc(state: ^Vulkan_Init_State, allocator := context.allocator,
 }
 
 cleanup_device :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
+	if .Device not_in state.resource_flags {
+		log.warn("Called device cleanup when resource flag is unset")
+		return
+	}
+
 	vk.DestroyDevice(state.device.handle, callbacks)
 	when VERBOSE_LOG do log.debug("Device destroyed")
 
