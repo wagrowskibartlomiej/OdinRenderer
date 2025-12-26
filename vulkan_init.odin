@@ -786,6 +786,10 @@ sort_by_score :: proc(i, j: Supported_Physical_Device) -> slice.Ordering {
 	else do return .Equal
 }
 
+// TODO:
+// There can be situation that presentation queue will be separate from graphics queue,
+// (sometimes for small performance increase?) so that case needs to be handled,
+// but it's really rare from what I understand, so it's low priority change
 physical_device_evaluate_queues :: proc(queue_properties: []vk.QueueFamilyProperties, surface: vk.SurfaceKHR, device: vk.PhysicalDevice) -> (indexes: Queue_Indexes) {
 	indexes.compute = -1
 	indexes.graphics = -1
