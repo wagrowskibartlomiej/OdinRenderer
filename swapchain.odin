@@ -10,7 +10,11 @@ Swapchain_State :: struct {
 	image_format: vk.SurfaceFormatKHR,
 	image_extent: vk.Extent2D,
 	present_mode: vk.PresentModeKHR,
-	images: []vk.Image,
+	images: []Swapchain_Image,
+}
+Swapchain_Image :: struct {
+	handle: vk.Image,
+	view: vk.ImageView,
 }
 
 choose_swapchain_image_format :: proc(formats: []vk.SurfaceFormatKHR) -> vk.SurfaceFormatKHR {
@@ -67,7 +71,7 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 
 
 
-	create_info := vk.SwapchainCreateInfoKHR{
+	swapchain_create_info := vk.SwapchainCreateInfoKHR{
 		sType = .SWAPCHAIN_CREATE_INFO_KHR,
 		surface = state.surface.handle,
 		minImageCount = state.physical_devices.active.capabilites.minImageCount,
@@ -88,7 +92,7 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 		
 	}
 
-	result := vk.CreateSwapchainKHR(state.device.handle, &create_info, callbacks, &state.swapchain.handle)
+	result := vk.CreateSwapchainKHR(state.device.handle, &swapchain_create_info, callbacks, &state.swapchain.handle)
 	if result != .SUCCESS {
 		log.errorf("Swapchain creation failed: %v", result)
 		return
@@ -107,10 +111,10 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 		return
 	}
 
-	state.swapchain.images = make([]vk.Image, image_count, allocator)
-	defer if !success do delete(state.swapchain.images, allocator)
+	images := make([]vk.Image, image_count, allocator)
+	defer delete(images, allocator)
 
-	result = vk.GetSwapchainImagesKHR(state.device.handle, state.swapchain.handle, &image_count, raw_data(state.swapchain.images))
+	result = vk.GetSwapchainImagesKHR(state.device.handle, state.swapchain.handle, &image_count, raw_data(images))
  	#partial switch result {
 	case .SUCCESS:
 		when VERBOSE_LOG do log.debug("(2) Retrieving swapchain images successful")
@@ -120,6 +124,37 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 		log.errorf("(2) Swapchain images retrieval failed: %v", result)
 		return
 	}
+
+	state.swapchain.images = make([]Swapchain_Image, len(images), allocator)
+	defer if !success do delete(state.swapchain.images, allocator)
+
+	image_view_create_info := vk.ImageViewCreateInfo{
+		sType = .IMAGE_VIEW_CREATE_INFO,
+		viewType = .D2,
+		format = state.swapchain.image_format.format,
+		subresourceRange = {
+			layerCount = 1,
+			levelCount = 1,
+			baseArrayLayer = 0,
+			baseMipLevel = 0,
+			aspectMask = {.COLOR}
+		}
+
+	}
+
+	for &img, i in state.swapchain.images {
+		state.swapchain.images[i].handle = images[i]
+
+		image_view_create_info.image = img.handle
+
+
+		result = vk.CreateImageView(state.device.handle, &image_view_create_info, callbacks, &img.view)
+		if result != .SUCCESS {
+			log.errorf("Swapchain image view creation failed: %v", result)
+			return
+		}
+	}
+	when VERBOSE_LOG do log.debug("Swapchain image views created")
 	
 	state.resource_flags |= {.Swapchain}
 	when VERBOSE_LOG do log.debug("Swapchain resource flag set")
@@ -134,8 +169,11 @@ cleanup_swapchain :: proc(state: ^Vulkan_Init_State, allocator := context.alloca
 		return
 	}
 
+	for i in state.swapchain.images do vk.DestroyImageView(state.device.handle, i.view, callbacks)
+	when VERBOSE_LOG do log.debug("Swapchain image views destroyed")
+
 	delete(state.swapchain.images, allocator)
-	when VERBOSE_LOG do log.debug("Swapchain images freed")
+	when VERBOSE_LOG do log.debug("Swapchain images cleaned up")
 	
 	vk.DestroySwapchainKHR(state.device.handle, state.swapchain.handle, callbacks)
 	when VERBOSE_LOG do log.debug("Swapchain destroyed")
