@@ -139,7 +139,9 @@ initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allo
 		return
 	}
 
-	success = create_swapchain(&state.init, window_state.handle, {}, callbacks)
+	NO_OLD_SWAPCHAIN: vk.SwapchainKHR : {}
+
+	success = create_swapchain(&state.init, window_state.handle, NO_OLD_SWAPCHAIN, allocator, callbacks)
 	if !success {
 		log.fatal("Failed to create swapchain")
 		return
@@ -154,7 +156,7 @@ cleanup_vulkan :: proc(state: ^Renderer_State, allocator := context.allocator, c
 	// Flags checks are here to not print warning when exiting early, 
 	// it probably won't be a bottleneck anyway 
 
-	if .Swapchain in state.init.resource_flags do cleanup_swapchain(&state.init, callbacks)
+	if .Swapchain in state.init.resource_flags do cleanup_swapchain(&state.init, allocator, callbacks)
 	if .Surface in state.init.resource_flags do cleanup_surface(&state.init, callbacks)
 	if .Device in state.init.resource_flags do cleanup_device(&state.init, allocator, callbacks)
 	if .Physical_Device in state.init.resource_flags do cleanup_physical_devices(&state.init, allocator)

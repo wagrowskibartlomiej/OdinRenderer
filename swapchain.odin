@@ -10,6 +10,7 @@ Swapchain_State :: struct {
 	image_format: vk.SurfaceFormatKHR,
 	image_extent: vk.Extent2D,
 	present_mode: vk.PresentModeKHR,
+	images: []vk.Image,
 }
 
 choose_swapchain_image_format :: proc(formats: []vk.SurfaceFormatKHR) -> vk.SurfaceFormatKHR {
@@ -49,7 +50,7 @@ choose_swapchain_presentation_mode :: proc(present_modes: []vk.PresentModeKHR) -
 	return present_modes[0]
 }
 
-create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_swapchain: vk.SwapchainKHR, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_swapchain: vk.SwapchainKHR, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
 	ensure(.Surface in state.resource_flags, "Surface must be created before swapchain creation")
 	if .Swapchain in state.resource_flags do log.warn("Called swapchain creation when resource flag is set, possible error")
 
@@ -93,6 +94,32 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 		return
 	}
 	when VERBOSE_LOG do log.debug("Swapchain created")
+
+	image_count: u32
+	result = vk.GetSwapchainImagesKHR(state.device.handle, state.swapchain.handle, &image_count, nil)
+ 	#partial switch result {
+	case .SUCCESS:
+		when VERBOSE_LOG do log.debug("(1) Retrieving swapchain images successful")
+	case .INCOMPLETE:
+		log.warn("(1) Not all swapchain images were retrieved")
+	case:
+		log.errorf("(1) Swapchain images retrieval failed: %v", result)
+		return
+	}
+
+	state.swapchain.images = make([]vk.Image, image_count, allocator)
+	defer if !success do delete(state.swapchain.images, allocator)
+
+	result = vk.GetSwapchainImagesKHR(state.device.handle, state.swapchain.handle, &image_count, raw_data(state.swapchain.images))
+ 	#partial switch result {
+	case .SUCCESS:
+		when VERBOSE_LOG do log.debug("(2) Retrieving swapchain images successful")
+	case .INCOMPLETE:
+		log.warn("(2) Not all swapchain images were retrieved")
+	case:
+		log.errorf("(2) Swapchain images retrieval failed: %v", result)
+		return
+	}
 	
 	state.resource_flags |= {.Swapchain}
 	when VERBOSE_LOG do log.debug("Swapchain resource flag set")
@@ -101,11 +128,14 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 	return 
 }
 
-cleanup_swapchain :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallbacks = nil) {
+cleanup_swapchain :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
 	if .Swapchain not_in state.resource_flags {
 		log.warn("Called swapchain cleanup when swapchain resource flag is unset")
 		return
 	}
+
+	delete(state.swapchain.images, allocator)
+	when VERBOSE_LOG do log.debug("Swapchain images freed")
 	
 	vk.DestroySwapchainKHR(state.device.handle, state.swapchain.handle, callbacks)
 	when VERBOSE_LOG do log.debug("Swapchain destroyed")
