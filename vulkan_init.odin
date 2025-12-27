@@ -48,6 +48,8 @@ Init_Resources_Created_Flag :: enum {
 	Device,
 	Surface,
 	Swapchain,
+	Render_Pass,
+	Pipelines,
 }
 Init_Resources_Created_Flags :: bit_set[Init_Resources_Created_Flag]
 
@@ -64,6 +66,8 @@ Vulkan_Init_State :: struct {
 	device: Device_State,
 	surface: Surface_State,
 	swapchain: Swapchain_State,
+	render_pass: Render_Pass_State,
+	pipelines: Pipelines_State,
 }
 
 Layers_Extensions_Properties :: struct {
@@ -147,6 +151,18 @@ initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allo
 		return
 	}
 
+	success = create_render_passes(&state.init, callbacks)
+	if !success {
+		log.fatal("Failed to create render passes")
+		return
+	}
+
+	success = create_graphics_pipelines(&state.init, allocator, temp_allocator, callbacks)
+	if !success {
+		log.fatal("Failed to create graphics pipelines")
+		return
+	}
+
 
 	when VERBOSE_LOG do log.debug("Initialization successful")
 	return
@@ -156,6 +172,8 @@ cleanup_vulkan :: proc(state: ^Renderer_State, allocator := context.allocator, c
 	// Flags checks are here to not print warning when exiting early, 
 	// it probably won't be a bottleneck anyway 
 
+	if .Pipelines in state.init.resource_flags do cleanup_graphics_pipelines(&state.init, allocator, callbacks)
+	if .Render_Pass in state.init.resource_flags do cleanup_renderer_passes(&state.init, callbacks)
 	if .Swapchain in state.init.resource_flags do cleanup_swapchain(&state.init, allocator, callbacks)
 	if .Surface in state.init.resource_flags do cleanup_surface(&state.init, callbacks)
 	if .Device in state.init.resource_flags do cleanup_device(&state.init, allocator, callbacks)

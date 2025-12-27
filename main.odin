@@ -41,6 +41,7 @@ when DESKTOP_BUILD do main :: proc () {
 	state := initialize_vulkan(&window_state)
 	if !check_all_flags(state.init.resource_flags) {
 		log.fatal("Initalization not completed successfuly")
+		cleanup_vulkan(&state)
 		return
 	}
 
