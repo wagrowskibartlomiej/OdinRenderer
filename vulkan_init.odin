@@ -48,7 +48,7 @@ Init_Resources_Created_Flag :: enum {
 	Device,
 	Surface,
 	Swapchain,
-	Render_Pass,
+	Render_Passes,
 	Pipelines,
 }
 Init_Resources_Created_Flags :: bit_set[Init_Resources_Created_Flag]
@@ -66,7 +66,7 @@ Vulkan_Init_State :: struct {
 	device: Device_State,
 	surface: Surface_State,
 	swapchain: Swapchain_State,
-	render_pass: Render_Pass_State,
+	render_passes: Render_Passes_State,
 	pipelines: Pipelines_State,
 }
 
@@ -173,7 +173,7 @@ cleanup_vulkan :: proc(state: ^Renderer_State, allocator := context.allocator, c
 	// it probably won't be a bottleneck anyway 
 
 	if .Pipelines in state.init.resource_flags do cleanup_graphics_pipelines(&state.init, allocator, callbacks)
-	if .Render_Pass in state.init.resource_flags do cleanup_renderer_passes(&state.init, callbacks)
+	if .Render_Passes in state.init.resource_flags do cleanup_renderer_passes(&state.init, callbacks)
 	if .Swapchain in state.init.resource_flags do cleanup_swapchain(&state.init, allocator, callbacks)
 	if .Surface in state.init.resource_flags do cleanup_surface(&state.init, callbacks)
 	if .Device in state.init.resource_flags do cleanup_device(&state.init, allocator, callbacks)

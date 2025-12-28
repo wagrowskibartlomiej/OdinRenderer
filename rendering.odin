@@ -5,7 +5,7 @@ import "core:slice"
 
 import vk "vendor:vulkan"
 
-Render_Pass_State :: struct {
+Render_Passes_State :: struct {
 	main_render_pass: vk.RenderPass
 }
 
@@ -17,7 +17,7 @@ Pipelines_State :: struct {
 }
 
 create_render_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
-	if .Render_Pass in state.resource_flags do log.warn("Called render pass creation while resource flag is set, possible error")
+	if .Render_Passes in state.resource_flags do log.warn("Called render pass creation while resource flag is set, possible error")
 
 	color_ref := vk.AttachmentReference{
 		attachment = 0,
@@ -54,14 +54,14 @@ create_render_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Allocatio
 	}	
 
 
-	result := vk.CreateRenderPass(state.device.handle, &render_pass_create_info, callbacks, &state.render_pass.main_render_pass)
+	result := vk.CreateRenderPass(state.device.handle, &render_pass_create_info, callbacks, &state.render_passes.main_render_pass)
 	if result != .SUCCESS {
 		log.errorf("Render passes creation failed: %v", result)
 		return
 	}
 	when VERBOSE_LOG do log.debug("Render passes created")
 
-	state.resource_flags |= {.Render_Pass}
+	state.resource_flags |= {.Render_Passes}
 	when VERBOSE_LOG do log.debug("Render passes resource flag set")
 
 	success = true
