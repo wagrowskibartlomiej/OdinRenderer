@@ -55,6 +55,7 @@ Init_Resources_Created_Flags :: bit_set[Init_Resources_Created_Flag]
 
 Renderer_State :: struct {
 	init: Vulkan_Init_State,
+	frame: Frame_State,
 }
 
 Vulkan_Init_State :: struct {
