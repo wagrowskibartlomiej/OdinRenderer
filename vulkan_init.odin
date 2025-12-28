@@ -1,10 +1,6 @@
 package render
 
 
-//TODO: Fix order or initalization, surface creation should occur after instance creation,
-//	so that we can check for presentation suport, color formats etc. when picking physical device.
-//	Refactor incoming.
-
 import "core:log"
 import "core:slice"
 import "core:dynlib"
