@@ -22,6 +22,18 @@ cleanup_glfw_window :: proc(state: ^Window_State) {
 	when VERBOSE_LOG do log.debug("Glfw cleaned up")
 }
 
+when !DESKTOP_BUILD {
+get_android_window :: proc(user_data: rawptr) -> (window: Window_State) { 
+	assert(user_data != nil)
+	window.handle = cast(^android.ANativeWindow)user_data
+	when VERBOSE_LOG do log.debug("Android window state created")
+	return
+}
+cleanup_android_window :: proc() {
+	when VERBOSE_LOG do log.debug("Android window state cleaned up")
+}
+}
+
 
 @(private="package")
 Window_State :: struct {
