@@ -2,6 +2,7 @@
 package render
 
 import "core:log"
+import "core:dynlib"
 
 import "vendor:glfw"
 import vk "vendor:vulkan"
