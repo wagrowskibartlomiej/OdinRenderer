@@ -5,5 +5,6 @@ odin build . \
   -define:DESKTOP_BUILD=true \
   -define:VERBOSE_LOG=true \
   -define:TRACKING_ALLOCATOR=true \
+  -define:EDITOR_BUILD=true \
   -debug
 

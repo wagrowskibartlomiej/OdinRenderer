@@ -19,8 +19,10 @@ Pipeline_State :: struct {
 	cache: vk.PipelineCache,
 	vertex_module,
 	fragment_module: vk.ShaderModule,
-	vertex_shader,
-	fragment_shader: Asset,
+}
+
+Commands_State :: struct {
+
 }
 
 
@@ -32,6 +34,7 @@ Frame_Resources_Flags :: bit_set[Frame_Resource_Flag]
 
 Frame_State :: struct {
 	sync: []Frame_Sync,
+	command: Commands_State,
 	resources_flags: Frame_Resources_Flags,
 }
 
@@ -106,26 +109,19 @@ cleanup_renderer_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Alloca
 	when VERBOSE_LOG do log.debug("Render passes resource flag unset")
 }
 
-create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
 	if .Pipelines in state.resource_flags do log.warn("Called pipelines creation when resource flag is set, possible error")
 
-	state.pipelines.traingle.vertex_shader, success = load_from_asset_dir("default_vertex.spv", allocator, temp_allocator)
-	if !success {
-		log.errorf("Cannot read deafult vertex shader")
-		return
-	}
 
-	state.pipelines.traingle.fragment_shader, success = load_from_asset_dir("default_fragment.spv", allocator, temp_allocator)
-	if !success {
-		log.errorf("Cannot read deafult vertex shader")
-		return
-	}
+	vertex := generate_id_for_asset(&ass_state.hash_state, .Shader, "default_vertex.spv", "shaders")
+	fragment := generate_id_for_asset(&ass_state.hash_state, .Shader, "default_vertex.spv", "shaders")
 
 	vertex_shader_create_info := vk.ShaderModuleCreateInfo{
 		sType = .SHADER_MODULE_CREATE_INFO,
 		pCode = raw_data(state.pipelines.traingle.vertex_shader.memory.([]u32)),
 		codeSize = slice.size(state.pipelines.traingle.vertex_shader.memory.([]u32)),
 	}
+
 	result := vk.CreateShaderModule(state.device.handle, &vertex_shader_create_info, callbacks, &state.pipelines.traingle.vertex_module)
 	if result != .SUCCESS {
 		log.errorf("Vertex shader module creation fail: %v", result)
@@ -385,7 +381,7 @@ cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, alloca
 		vk.DestroySemaphore(init.device.handle, s.render_done, callbacks)
 		vk.DestroyFence(init.device.handle, s.frame_done, callbacks)
 	}
-	when VERBOSE_LOG do log.debuy("Frame synchronization destroyed")
+	when VERBOSE_LOG do log.debug("Frame synchronization destroyed")
 
 	delete(state.sync, allocator)
 	when VERBOSE_LOG do log.debug("Frame synchronization cleaned up")
@@ -394,3 +390,6 @@ cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, alloca
 	when VERBOSE_LOG do log.debug("Frame synchronization resource flag unset")
 }
 
+create_command_resources :: proc() {
+
+}

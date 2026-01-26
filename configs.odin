@@ -2,6 +2,7 @@ package render
 
 VERBOSE_LOG :: #config(VERBOSE_LOG, false)
 DESKTOP_BUILD :: #config(DESKTOP_BUILD, true)
+EDITOR_BUILD :: #config(EDITOR_BUILD, false)
 TRACKING_ALLOCATOR :: #config(TRACKING_ALLOCATOR, false)
 FRAMES_IN_FLIGHT := 2
 
