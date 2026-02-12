@@ -113,8 +113,8 @@ Device_State :: struct {
 	graphics, transfer, compute: vk.Queue,
 }
 
-initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (state: Renderer_State) {
-	load_vklib(&state)
+initialize_vulkan :: proc(state: ^Renderer_State, window_state: ^Window_State, assets_state: ^Assets_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) {
+	load_vklib(state)
 
 	success := create_instance(&state.init, allocator, temp_allocator, callbacks)
 	if !success {
@@ -124,7 +124,7 @@ initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allo
 
 	success = create_surface(&state.init, window_state, allocator, callbacks)
 	if !success {
-		log.fatal("FAiled to create surface")
+		log.fatal("Failed to create surface")
 		return
 	}
 
@@ -154,7 +154,7 @@ initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allo
 		return
 	}
 
-	success = create_graphics_pipelines(&state.init, allocator, temp_allocator, callbacks)
+	success = create_graphics_pipelines(&state.init, assets_state, allocator, temp_allocator, callbacks)
 	if !success {
 		log.fatal("Failed to create graphics pipelines")
 		return

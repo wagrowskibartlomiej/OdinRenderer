@@ -23,7 +23,7 @@ when DESKTOP_BUILD do main :: proc () {
 		defer {
 			if len(alloc.allocation_map) > 0 {
 				fmt.eprintf("=== %v allocations not freed: ===\n", len(alloc.allocation_map))
-				for _, entry in alloc.allocation_map do fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+				for _, entry in alloc.allocation_map do fmt.eprintf("- %v bytes @ %v (%v)\n", entry.size, entry.location, entry.mode)
 			}
 
 			mem.tracking_allocator_destroy(&alloc)
@@ -43,26 +43,30 @@ when DESKTOP_BUILD do main :: proc () {
 	defer log.destroy_console_logger(context.logger)
 
 	context.user_ptr = &global_app_state
-	
-	if EDITOR_BUILD {
+
+	global_app_state.assets.allocator = context.allocator
+	global_app_state.assets.binary_data_allocator = context.allocator
+
+	when EDITOR_BUILD {
+		init_assets_editor(&global_app_state.assets)
 		load_assets_dir_to_map_editor(&global_app_state.assets, context.temp_allocator)
-		defer cleanup_assets_map_editor(&global_app_state.assets)
+		defer cleanup_assets_editor(&global_app_state.assets)
 	} else {
 		loaded: bool
-		global_app_state.assets.assets, loaded = load_assets_immediate(global_app_state.assets.asset_pack_handle, context.allocator)
+		global_app_state.assets.items, global_app_state.assets.pkgs, loaded = load_assets_immediate(global_app_state.assets.asset_pack_handle, context.allocator)
 		if !loaded do return
 		defer cleanup_assets_map(&global_app_state.assets)
 	}
 
-	window_state := create_window(nil)
-	defer cleanup_window(&window_state)
+	global_app_state.window = create_window(nil)
+	defer cleanup_window(&global_app_state.window)
 
-	state := initialize_vulkan(&window_state)
-	if !check_all_flags(state.init.resource_flags) {
+	initialize_vulkan(&global_app_state.render, &global_app_state.window, &global_app_state.assets)
+	if !check_all_flags(global_app_state.render.init.resource_flags) {
 		log.fatal("Initalization not completed successfuly")
-		cleanup_vulkan(&state)
+		cleanup_vulkan(&global_app_state.render)
 		return
 	}
 
-	defer cleanup_vulkan(&state)
+	defer cleanup_vulkan(&global_app_state.render)
 }

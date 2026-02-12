@@ -112,14 +112,23 @@ cleanup_renderer_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Alloca
 create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
 	if .Pipelines in state.resource_flags do log.warn("Called pipelines creation when resource flag is set, possible error")
 
+	vertex, vertex_present := get_asset_memory(ass_state, .Shader, "default_vertex.spv", "spirv")
+	if !vertex_present {
+		log.error("Cannot create graphics pipelines: Missing vertex shader memory in assets pool")
+		return
+	}
 
-	vertex := generate_id_for_asset(&ass_state.hash_state, .Shader, "default_vertex.spv", "shaders")
-	fragment := generate_id_for_asset(&ass_state.hash_state, .Shader, "default_vertex.spv", "shaders")
+
+	fragment, fragment_present := get_asset_memory(ass_state, .Shader, "default_fragment.spv", "spirv")
+	if !fragment_present {
+		log.error("Cannot create graphics pipelines: Missing vertex shader memory in assets pool")
+		return
+	}
 
 	vertex_shader_create_info := vk.ShaderModuleCreateInfo{
 		sType = .SHADER_MODULE_CREATE_INFO,
-		pCode = raw_data(state.pipelines.traingle.vertex_shader.memory.([]u32)),
-		codeSize = slice.size(state.pipelines.traingle.vertex_shader.memory.([]u32)),
+		pCode = raw_data(vertex.([]u32)),
+		codeSize = slice.size(vertex.([]u32)),
 	}
 
 	result := vk.CreateShaderModule(state.device.handle, &vertex_shader_create_info, callbacks, &state.pipelines.traingle.vertex_module)
@@ -131,8 +140,8 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_
 
 	fragment_shader_create_info := vk.ShaderModuleCreateInfo{
 		sType = .SHADER_MODULE_CREATE_INFO,
-		pCode = raw_data(state.pipelines.traingle.fragment_shader.memory.([]u32)),
-		codeSize = slice.size(state.pipelines.traingle.fragment_shader.memory.([]u32)),
+		pCode = raw_data(fragment.([]u32)),
+		codeSize = slice.size(fragment.([]u32)),
 	}
 
 	result = vk.CreateShaderModule(state.device.handle, &fragment_shader_create_info, callbacks, &state.pipelines.traingle.fragment_module)
@@ -287,12 +296,6 @@ cleanup_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := conte
 
 	vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.fragment_module, callbacks)
 	when VERBOSE_LOG do log.debug("Fragment shader module destroyed")
-
-	delete(state.pipelines.traingle.vertex_shader.memory.([]u32), allocator)
-	when VERBOSE_LOG do log.debug("Vertex shader memory freed")
-
-	delete(state.pipelines.traingle.fragment_shader.memory.([]u32), allocator)
-	when VERBOSE_LOG do log.debug("Fragment shader memory freed")
 
 	state.resource_flags &~= {.Pipelines}
 	when VERBOSE_LOG do log.debug("Pipelines resource flag unset")

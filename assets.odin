@@ -4,12 +4,15 @@ import "base:runtime"
 import "core:os"
 import "core:log"
 import "core:slice"
+import "core:strings"
 import "core:hash/xxhash"
 import fp "core:path/filepath"
 
 ASSET_PACK_NAME : string : "assets.pack"
-ASSET_PACK_HEADER : string : "ODIN_RENDERER_ASSET_PACK"
+ASSET_PACK_HEADER : string : "ODINRENDERERASSETPACK"
 ASSET_PACK_VERSION : u64 : 1
+
+PKG_BACKUP_NAME :: "PKGUNRESLOVED"
 
 // TODO: Optimally building proccess should generate enum values of packages and use that instead of strings
 Asset_Runtime :: struct {
@@ -19,10 +22,16 @@ Asset_Runtime :: struct {
 	name: string,
 	memory: Asset_Memory,
 	references: int,
-	meta_data: rawptr,
+	metadata: rawptr,
 	user_data: rawptr,
 }
 
+Asset_Editor_Metadata :: struct {
+	filepath: string,
+	editor_user_data: rawptr,
+}
+
+// Used for assets pack building and parsing
 Asset_Descriptor :: struct {
 	hash: u64le, 
 	type: i32le,
@@ -35,10 +44,12 @@ Asset_Descriptor :: struct {
 }
 
 Assets_State :: struct {
-	allocator: runtime.Allocator,
-	assets: map[xxhash.xxh_u64]Asset_Runtime,
-	asset_pack_handle: Asset_Pack_Handle,
-	hash_state: xxhash.XXH3_state,
+	allocator: runtime.Allocator, // Used for items map, pkgs interner
+	binary_data_allocator: runtime.Allocator, // Used for binary data of assets like raw data of texture, sounds etc.
+	items: map[xxhash.xxh_u64]Asset_Runtime,
+	pkgs: strings.Intern,
+	asset_pack_handle: Asset_Pack_Handle, // Handle to default asset pack (used in build mode)
+	hash_state: xxhash.XXH3_state, // State for handling asstes ID generation, either for building assets pack or generating hash ID to retrieve asset
 }
 
 Opaque_Struct :: struct {}
@@ -91,7 +102,51 @@ load_asset :: proc{
 	load_asset_mem,
 }
 
-load_asset_editor :: proc(filename: string, allocator := context.allocator, temp_allocator := context.temp_allocator) -> (asset: Asset_Runtime, success: bool) {
+get_asset :: proc{
+	get_asset_copy,
+	get_asset_ptr
+}
+
+get_asset_copy :: proc(state: ^Assets_State, type: Asset_Type, name, pkg: string) -> (asset: Asset_Runtime, exists: bool) {
+	asset_id := generate_id_for_asset(&state.hash_state, type, name, pkg)
+	asset, exists = state.items[asset_id]
+	
+	return
+}
+
+get_asset_ptr :: proc(asset: ^Asset_Runtime, state: ^Assets_State, type: Asset_Type, name, pkg: string) -> (exists: bool) {
+	asset := asset
+
+	asset_id := generate_id_for_asset(&state.hash_state, type, name, pkg)
+	asset, exists = &state.items[asset_id]
+	
+	return
+}
+
+get_asset_memory :: proc(state: ^Assets_State, type: Asset_Type, name, pkg: string) -> (mem: Asset_Memory, exists: bool) {
+	asset_id := generate_id_for_asset(&state.hash_state, type, name, pkg)
+	asset: Asset_Runtime
+
+	asset, exists = state.items[asset_id]
+	if !exists do return
+
+	mem = asset.memory
+	return
+}
+
+initalize_assets :: proc() {
+	// for both inizalize structure datas with map pkg interner ect,
+	// give option to pass custom allocators
+	// then for EDITOR load assets dir to map editor etc.
+	// for BUILD load asset pack
+}
+
+cleanup_assets :: proc() {
+
+}
+
+// You can pass pkg name to procedure to make it use within asset, but if left empty attempt will be made to get it from directory that contains the asset
+load_asset_editor :: proc(filename: string, pkg: string = "", allocator := context.allocator, binary_data_allocator := context.allocator, temp_allocator := context.temp_allocator) -> (asset: Asset_Runtime, success: bool) {
 	file_handle, err := os.open(filename)
 	if err != nil {
 		log.errorf("Cannot open file '%v', error: %v", filename, err)
@@ -101,6 +156,11 @@ load_asset_editor :: proc(filename: string, allocator := context.allocator, temp
 		err = os.close(file_handle)
 		if err != nil do log.errorf("File '%v' closing error: %v", err)
 	}
+
+	if pkg == "" {
+		dir_name, _ := get_file_pkg(filename, allocator, temp_allocator)
+		asset.pkg = dir_name
+	} else do asset.pkg = pkg
 
 	asset.type, asset.extension = get_asset_type_from_filename_extension(filename, temp_allocator)
 
@@ -122,59 +182,76 @@ load_asset_editor :: proc(filename: string, allocator := context.allocator, temp
 	}
 	when VERBOSE_LOG do log.debugf("Asset type from file '%v' detected as: %v", filename, asset.type)
 
+	// Memory loading from file will be pretty much the same for every type
+	byte_mem, read_err := os.read_entire_file_or_err(file_handle, binary_data_allocator)
+	if read_err != nil {
+		log.errorf("Reading of file '%v' failed, error: %v", filename, read_err)
+		success = false
+		return
+	}
+
 	switch asset.type {
 		case .Asset_Pack:
 			log.error("If this code branch gets executed, it probably means that there is a serious bug")
 			return
-		case:
-			// Memory loading from file will be pretty much the same for every type
-			byte_mem, err := os.read_entire_file_or_err(filename, allocator)
-			if err != nil {
-				log.errorf("Reading of file '%v' failed, error: %v", filename, err)
-				success = false
-				return
-			}
-			asset.memory = byte_mem
-			fallthrough
 		case .Shader:
-			asset.memory = slice.reinterpret([]u32, asset.memory.([]byte))
+			asset.memory = slice.reinterpret([]u32, byte_mem)
 			when VERBOSE_LOG do log.debugf("Loaded shader data from file '%v'", filename)
 		case .Mesh: 
+			asset.memory = byte_mem
 			when VERBOSE_LOG do log.debugf("Loaded mesh data from file '%v'", filename)
 		case .Texture:
+			asset.memory = byte_mem
 			when VERBOSE_LOG do log.debugf("Loaded texture data from file '%v'", filename)
 		case .Primitive_Triangle:
+			asset.memory = byte_mem
 			when VERBOSE_LOG do log.debugf("Loaded primitve data from file '%v'", filename)
 	}
 
 	// Just in case I'll add other functionality I'll leave the check here
 	defer if !success {
-		if asset.type == .Shader do delete(asset.memory.([]u32), allocator)
-		else do delete(asset.memory.([]byte), allocator)
+		if asset.type == .Shader do delete(asset.memory.([]u32), binary_data_allocator)
+		else do delete(asset.memory.([]byte), binary_data_allocator)
 
 		asset.memory = nil
 	}
 
-	asset.name = filename
+	name := fp.base(filename)
+	metadata := new(Asset_Editor_Metadata, allocator)
+	metadata.filepath = filename
+	asset.metadata = metadata
+	asset.name = name
+
 	success = true
 	return
 }
 
-load_asset_to_map_editor :: proc(filename: string, state: ^Assets_State, temp_allocator := context.temp_allocator) -> (success: bool) {
+load_asset_to_map_editor :: proc(filename: string, state: ^Assets_State, pkg: string = "", temp_allocator := context.temp_allocator) -> (success: bool) {
 	asset: Asset_Runtime
-	asset, success = load_asset_editor(filename, state.allocator, temp_allocator)
+	asset, success = load_asset_editor(filename, pkg, state.allocator, state.binary_data_allocator, temp_allocator)
+	pkg_interned, resolved_err := strings.intern_get(&state.pkgs, asset.pkg)
+
+	if resolved_err != nil {
+		log.errorf("Interning of pkg '%v' failed: %v", asset.pkg, resolved_err)
+		if pkg == "" do delete(asset.pkg, state.allocator)
+		asset.pkg = PKG_BACKUP_NAME
+	} else {
+		if pkg == "" do delete(asset.pkg, state.allocator)
+		asset.pkg = pkg_interned
+	}
+
 	success or_return
 
 	h := generate_id_for_asset(&state.hash_state, asset.type, asset.name, asset.pkg)
 
-	a, exists := state.assets[h]
+	a, exists := state.items[h]
 
 	if exists {
 		log.errorf("Cannot load asset from '%v', generated ID is already taken by '%v'", filename, a.name)
 		success = false
 		return
 	} else {
-		state.assets[h] = asset
+		state.items[h] = asset
 		when VERBOSE_LOG do log.debugf("Loaded asset from filename '%v' and added it to assets map", filename)
 	}
 
@@ -189,11 +266,53 @@ load_assets_dir_to_map_editor :: proc(state: ^Assets_State, temp_allocator := co
 	return
 }
 
+get_file_pkg :: proc(filename: string, allocator := context.allocator, temp_allocator := context.temp_allocator) -> (dir: string, success: bool) {
+	absolute: string
+	absolute, success = fp.abs(filename, temp_allocator)
+	if !success {
+		log.errorf("Cannot get a directory of a file '%v'", filename)
+		return
+	}
+	defer delete(absolute, temp_allocator)
+
+	dirs := fp.dir(absolute, temp_allocator)
+	defer delete(dirs, temp_allocator)
+	if dirs == "." {
+		dir = PKG_BACKUP_NAME
+		success = true
+		return
+	}
+
+	dir_backing := make([dynamic]byte, 0, 256, allocator)
+
+	// TODO: Could maybe be improved to just search from reverse
+	for i in 0..<len(absolute) {
+		switch absolute[i] {
+			case fp.SEPARATOR:
+				clear(&dir_backing)
+			case:
+				append(&dir_backing, absolute[i])
+		}
+	}
+
+	_, err := shrink(&dir_backing)
+	if err != nil do log.errorf("Cannot shrink buffer of '%v': %v", string(dir_backing[:]), err)
+	dir = string(dir_backing[:])
+	success = true
+	return
+}
+
+get_file_pkg_to_map :: proc(filename: string, state: ^Assets_State, temp_allocator := context.temp_allocator) {
+	pkg, _ := get_file_pkg(filename, state.allocator, temp_allocator)
+	defer delete(pkg, state.allocator)
+	_, err := strings.intern_get(&state.pkgs, pkg)
+	if err != nil do log.errorf("Cannot get string '%v' from packages intern: %v", err)
+}
 
 load_assets_from_dir :: proc(dir: string, state: ^Assets_State, temp_allocator := context.temp_allocator) -> (success: bool) {
 	handle, err := os.open(dir)
 	if err != nil {
-		log.errorf("Cannot open %v directory: %v", err)
+		log.errorf("Cannot open %v directory: %v", dir, err)
 		return false
 	}
 	defer os.close(handle)
@@ -206,10 +325,33 @@ load_assets_from_dir :: proc(dir: string, state: ^Assets_State, temp_allocator :
 	}
 	defer delete(file_infos, temp_allocator)
 
+	if len(file_infos) <= 0 {
+		when VERBOSE_LOG do log.debugf("Empty directory detected '%v'", dir)
+		return
+	}
+
+	pkg, _ := get_file_pkg(dir, state.allocator, temp_allocator)
+	defer delete(pkg, state.allocator)
+	pkg_interned, interning_err := strings.intern_get(&state.pkgs, pkg)
+	if interning_err != nil do pkg_interned = PKG_BACKUP_NAME
+
 	for f in file_infos {
-		if f.is_dir do success = load_assets_from_dir(f.name, state, temp_allocator)
-		else do success = load_asset_to_map_editor(f.name, state, temp_allocator)
-		success or_return
+		if f.is_dir {
+			success = load_assets_from_dir(f.fullpath, state, temp_allocator)
+			if !success do log.errorf("Loading of directory '%v' failed", f.name)
+		} else {
+			path, err := strings.clone(f.fullpath, state.allocator)
+			if err != nil {
+				log.errorf("Cannot clone file path '%v' some functionality may not work properly: %v", f.fullpath, err)
+				path = f.fullpath
+			}
+
+			success = load_asset_to_map_editor(path, state, pkg_interned, temp_allocator)
+			if !success {
+				log.errorf("Loading of '%v' failed", f.name)
+				if err == nil do delete(path, state.allocator) // Delete path copy if it was created 
+			}
+		}
 	}
 
 	when VERBOSE_LOG do log.debugf("Directory %v loaded successfuly", dir)
@@ -265,7 +407,7 @@ get_asset_type_from_filename_extension :: proc(name: string, temp_allocator := c
 }
 
 
-build_asset_pack :: proc(assets: map[xxhash.xxh_u64]Asset_Runtime, allocator := context.allocator, temp_allocator := context.temp_allocator) {
+build_asset_pack :: proc(assets: ^map[xxhash.xxh_u64]Asset_Runtime) {
 	handle, err := os.open(ASSET_PACK_NAME, os.O_TRUNC | os.O_CREATE | os.O_WRONLY, 0o644)
 	if err != nil {
 		log.errorf("Asset pack file creation error: %v", err)
@@ -414,20 +556,25 @@ unload_asset_memory :: proc(a: ^Asset_Runtime, allocator := context.allocator) -
 
 // WARN: USE ONLY FOR TESTING OR WHEN YOU KNOW WHAT YOU'RE DOING
 // Loads whole asset pack map and memory of all assets 
-load_assets_immediate :: proc(handle: Asset_Pack_Handle, allocator := context.allocator) -> (m: map[xxhash.xxh_u64]Asset_Runtime, success: bool) {
-	m, success = load_assets_map(handle, allocator)
+load_assets_immediate :: proc(handle: Asset_Pack_Handle, allocator := context.allocator, binary_data_allocator := context.allocator) -> (m: map[xxhash.xxh_u64]Asset_Runtime, pkgs: strings.Intern, success: bool) {
+	m, pkgs, success = load_assets_map(handle, allocator)
 	if !success {
 		log.error("Cannot load assets map")
 		return
 	}
 
-	for _, &ass in m do load_asset_mem(&ass, handle, allocator)
+	for _, &ass in m do load_asset_mem(&ass, handle, binary_data_allocator)
 
 	return
 }
 
+init_assets_editor :: proc(state: ^Assets_State) {
+	state.items = make(map[xxhash.xxh_u64]Asset_Runtime, state.allocator)
+	strings.intern_init(&state.pkgs, state.allocator, state.allocator)
+}
 
-load_assets_map :: proc(handle: Asset_Pack_Handle, allocator := context.allocator) -> (m: map[xxhash.xxh_u64]Asset_Runtime, success: bool) {	
+
+load_assets_map :: proc(handle: Asset_Pack_Handle, allocator := context.allocator) -> (m: map[xxhash.xxh_u64]Asset_Runtime, pkgs: strings.Intern, success: bool) {	
 	header_offset: i64
 	
 	asset_pack_name_b := transmute([]byte)ASSET_PACK_NAME
@@ -446,12 +593,14 @@ load_assets_map :: proc(handle: Asset_Pack_Handle, allocator := context.allocato
 	m = make(map[xxhash.xxh_u64]Asset_Runtime, asset_count, allocator)
 	defer if !success do delete(m)
 
+	strings.intern_init(&pkgs, allocator, allocator)
+	defer if !success do strings.intern_destroy(&pkgs)
+
 	offset_counter := header_offset
 	a: Asset_Descriptor
 
 	defer if !success do for _, asset in m {
 		if len(asset.name) > 0 do delete(asset.name, allocator)
-		if len(asset.pkg) > 0 do delete(asset.pkg, allocator)
 	}
 
 	for i in 0 ..< asset_count {
@@ -500,7 +649,7 @@ load_assets_map :: proc(handle: Asset_Pack_Handle, allocator := context.allocato
 		offset_counter += size_of(a.pkg_len)
 
 		a._pkg_backing = make([]byte, int(a.pkg_len), allocator)
-		defer if !success do delete(a._pkg_backing, allocator)
+		defer delete(a._pkg_backing, allocator)
 
 		n, err = os.read_at(handle.(os.Handle), a._pkg_backing[:], offset_counter)
 		if n != slice.size(a._pkg_backing) || err != nil {
@@ -512,6 +661,12 @@ load_assets_map :: proc(handle: Asset_Pack_Handle, allocator := context.allocato
 			return
 		}
 		offset_counter += i64(slice.size(a._pkg_backing))
+
+		pkg, intern_err := strings.intern_get(&pkgs, string(a._pkg_backing[:]))
+		if intern_err != nil {
+			log.errorf("Cannot get the pkg '%v' from pkgs interner: %v", string(a._pkg_backing[:]), intern_err)
+			pkg = PKG_BACKUP_NAME
+		}
 
 		n, err = os.read_at(handle.(os.Handle), slice.bytes_from_ptr(&a.name_len, size_of(a.name_len)), offset_counter)
 		if n != size_of(a.name_len) || err != nil {
@@ -581,32 +736,48 @@ load_assets_map :: proc(handle: Asset_Pack_Handle, allocator := context.allocato
 }
 
 cleanup_assets_mem :: proc(state: ^Assets_State) {
-	for _, a in state.assets {
+	for _, a in state.items {
 		#partial switch a.type {
 		case .Shader:
-			delete(a.memory.([]u32), state.allocator)
+			delete(a.memory.([]u32), state.binary_data_allocator)
 		case:
-			delete(a.memory.([]byte), state.allocator)
+			delete(a.memory.([]byte), state.binary_data_allocator)
 		}
 	}
 }
 
 cleanup_assets_map :: proc(state: ^Assets_State) {
-	for _, a in state.assets {
+	for _, a in state.items {
 		#partial switch a.type {
 		case .Shader:
-			delete(a.memory.([]u32), state.allocator)
+			delete(a.memory.([]u32), state.binary_data_allocator)
 		case:
-			delete(a.memory.([]byte), state.allocator)
+			delete(a.memory.([]byte), state.binary_data_allocator)
 		}
 		delete(a.name, state.allocator)
-		delete(a.pkg, state.allocator)
 	}
 
-	delete(state.assets)
+	strings.intern_destroy(&state.pkgs)
+	delete(state.items)
 }
 
 cleanup_assets_map_editor :: proc(state: ^Assets_State) {
-	cleanup_assets_mem(state)
-	delete(state.assets)
+	for _, a in state.items {
+		#partial switch a.type {
+		case .Shader:
+			delete(a.memory.([]u32), state.binary_data_allocator)
+		case:
+			delete(a.memory.([]byte), state.binary_data_allocator)
+		}
+		metadata := cast(^Asset_Editor_Metadata)a.metadata
+
+		delete(metadata.filepath, state.allocator)
+		free(metadata, state.allocator)
+	}
+	delete(state.items)
+}
+
+cleanup_assets_editor :: proc(state: ^Assets_State) {
+	strings.intern_destroy(&state.pkgs)
+	cleanup_assets_map_editor(state)
 }
