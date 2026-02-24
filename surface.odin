@@ -1,5 +1,5 @@
 #+private file
-package render
+package engine
 
 import "core:log"
 import "core:dynlib"
@@ -18,8 +18,13 @@ Surface_State :: struct {
 create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
 	if .Surface in state.resource_flags do log.warn("Surface creation called when resource flag is set, possiible error")
 
-	when DESKTOP_BUILD do success = glfw_create_surface(state, window_state, callbacks)
-	else do success = android_create_surface(state, window_state, callbacks)
+	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do success = glfw_create_surface(state, window_state, callbacks)
+	else when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
+		when ODIN_PLATFORM_SUBTARGET == .Android do success = android_create_surface(state, window_state, callbacks)
+		else do #panic("Platform subtraget '" + ODIN_PLATFORM_SUBTARGET + "' does not have implemented Vulkan's surface creation")
+	}
+	else do #panic("Build target '" + CONFIG_BUILD_TARGET + "' does not have implemented Vulkan's surface creation")
+
 	success or_return
 
 	success = true
@@ -34,13 +39,13 @@ cleanup_surface :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCall
 	}
 
 	vk.DestroySurfaceKHR(state.instance.handle, state.surface.handle, callbacks)
-	when VERBOSE_LOG {
-		when DESKTOP_BUILD do log.debug("GLFW surface destroyed")
+	when CONFIG_VERBOSE_LOG  {
+		when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do log.debug("GLFW surface destroyed")
 		else do log.debug("Android surface destroyed")
 	}
 
 	state.resource_flags &~= {.Surface}
-	when VERBOSE_LOG do log.debug("Surface resource flag unset")
+	when CONFIG_VERBOSE_LOG  do log.debug("Surface resource flag unset")
 }
 
 glfw_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
@@ -49,17 +54,17 @@ glfw_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_Sta
 		log.errorf("GLFW window surface creation error: %v", result)
 		return
 	}
-	when VERBOSE_LOG do log.debug("GLFW Surface created")
+	when CONFIG_VERBOSE_LOG  do log.debug("GLFW Surface created")
 	
 	state.resource_flags |= {.Surface}
-	when VERBOSE_LOG do log.debug("Surface resource flag set")
+	when CONFIG_VERBOSE_LOG  do log.debug("Surface resource flag set")
 
 	success = true
 	return
 } 
 
 
-when !DESKTOP_BUILD {
+when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] && ODIN_PLATFORM_SUBTARGET == .Android {
 
 VkAndroidSurfaceCreateFlagKHR :: enum vk.Flags {}
 VkAndroidSurfaceCreateFlagsKHR :: distinct bit_set[VkAndroidSurfaceCreateFlagKHR; vk.Flags]
@@ -90,10 +95,10 @@ android_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_
 		log.errorf("Android surface creation failed: %v", result)
 		return
 	}
-	when VERBOSE_LOG do log.debug("Android surface created")
+	when CONFIG_VERBOSE_LOG do log.debug("Android surface created")
 
 	state.resource_flags |= {.Surface}
-	when VERBOSE_LOG do log.debug("Surface resource flag set")
+	when CONFIG_VERBOSE_LOG do log.debug("Surface resource flag set")
 
 	success = true
 	return

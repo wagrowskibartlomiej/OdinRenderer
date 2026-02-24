@@ -1,4 +1,4 @@
-package render
+package engine
 
 import "core:log"
 
@@ -29,7 +29,7 @@ choose_swapchain_image_format :: proc(formats: []vk.SurfaceFormatKHR) -> vk.Surf
 choose_swapchain_image_extent :: proc(capabilities: vk.SurfaceCapabilitiesKHR, window_handle: rawptr) -> vk.Extent2D {
 	if capabilities.currentExtent.width != max(u32) do return capabilities.currentExtent
 	else {
-		when !DESKTOP_BUILD do log.panicf("Value of current extent set to max(u32) is supported only for desktop builds")
+		when CONFIG_BUILD_TARGET != Build_Targets[.Pc] do log.panicf("Value of current extent set to max(u32) is supported only for desktop builds")
 		else {
 			width, height := glfw.GetFramebufferSize(glfw.WindowHandle(window_handle))
 
@@ -63,11 +63,11 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 	DEFAULT_COMPOSITE_ALPHA : vk.CompositeAlphaFlagsKHR : {.OPAQUE}
 
 	state.swapchain.image_format = choose_swapchain_image_format(state.physical_devices.active.formats)
-	when VERBOSE_LOG do log.debugf("Chosen swapchain image format and color: %v | %v", state.swapchain.image_format.format, state.swapchain.image_format.colorSpace)
+	when CONFIG_VERBOSE_LOG do log.debugf("Chosen swapchain image format and color: %v | %v", state.swapchain.image_format.format, state.swapchain.image_format.colorSpace)
 	state.swapchain.image_extent = choose_swapchain_image_extent(state.physical_devices.active.capabilites, window_handle)
-	when VERBOSE_LOG do log.debugf("Chosen swapchain image extent (W x H): %v x %v", state.swapchain.image_extent.width, state.swapchain.image_extent.height)
+	when CONFIG_VERBOSE_LOG do log.debugf("Chosen swapchain image extent (W x H): %v x %v", state.swapchain.image_extent.width, state.swapchain.image_extent.height)
 	state.swapchain.present_mode = choose_swapchain_presentation_mode(state.physical_devices.active.present_modes)
-	when VERBOSE_LOG do log.debugf("Chosen swapchain presentation mode: %v", state.swapchain.present_mode)
+	when CONFIG_VERBOSE_LOG do log.debugf("Chosen swapchain presentation mode: %v", state.swapchain.present_mode)
 
 
 
@@ -97,13 +97,13 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 		log.errorf("Swapchain creation failed: %v", result)
 		return
 	}
-	when VERBOSE_LOG do log.debug("Swapchain created")
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain created")
 
 	image_count: u32
 	result = vk.GetSwapchainImagesKHR(state.device.handle, state.swapchain.handle, &image_count, nil)
  	#partial switch result {
 	case .SUCCESS:
-		when VERBOSE_LOG do log.debug("(1) Retrieving swapchain images successful")
+		when CONFIG_VERBOSE_LOG do log.debug("(1) Retrieving swapchain images successful")
 	case .INCOMPLETE:
 		log.warn("(1) Not all swapchain images were retrieved")
 	case:
@@ -117,7 +117,7 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 	result = vk.GetSwapchainImagesKHR(state.device.handle, state.swapchain.handle, &image_count, raw_data(images))
  	#partial switch result {
 	case .SUCCESS:
-		when VERBOSE_LOG do log.debug("(2) Retrieving swapchain images successful")
+		when CONFIG_VERBOSE_LOG do log.debug("(2) Retrieving swapchain images successful")
 	case .INCOMPLETE:
 		log.warn("(2) Not all swapchain images were retrieved")
 	case:
@@ -154,10 +154,10 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 			return
 		}
 	}
-	when VERBOSE_LOG do log.debug("Swapchain image views created")
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain image views created")
 	
 	state.resource_flags |= {.Swapchain}
-	when VERBOSE_LOG do log.debug("Swapchain resource flag set")
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain resource flag set")
 
 	success = true
 	return 
@@ -170,14 +170,14 @@ cleanup_swapchain :: proc(state: ^Vulkan_Init_State, allocator := context.alloca
 	}
 
 	for i in state.swapchain.images do vk.DestroyImageView(state.device.handle, i.view, callbacks)
-	when VERBOSE_LOG do log.debug("Swapchain image views destroyed")
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain image views destroyed")
 
 	delete(state.swapchain.images, allocator)
-	when VERBOSE_LOG do log.debug("Swapchain images cleaned up")
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain images cleaned up")
 	
 	vk.DestroySwapchainKHR(state.device.handle, state.swapchain.handle, callbacks)
-	when VERBOSE_LOG do log.debug("Swapchain destroyed")
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain destroyed")
 
 	state.resource_flags &~= {.Swapchain}
-	when VERBOSE_LOG do log.debug("Swapchain resource flag unset")
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain resource flag unset")
 }

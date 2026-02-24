@@ -2,8 +2,8 @@
 set -e
 
 odin build . \
-  -define:DESKTOP_BUILD=true \
-  -define:VERBOSE_LOG=true \
+  -define:BUILD_TARGET=PC \
+  -define:VERBOSE_LOGGING=true \
   -define:TRACKING_ALLOCATOR=true \
   -debug
 
