@@ -3,9 +3,14 @@ package engine
 import "core:os"
 import "core:log"
 import "core:fmt"
+import "core:slice"
+import "core:reflect"
+
 import "base:intrinsics"
 
-ENGINE_CONFIGURATION_FILE_NAME :: "configuration.engine"
+@rodata
+ENGINE_CONFIGURATION_FILE_NAME := "configuration.engine"
+
 /*
 	COMPILE TIME CONFIGS:
 	All values that have a 'CONFIG_' prefix and are initalized with '#config' declaration.
@@ -119,9 +124,11 @@ when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] && (ODIN_PLATFORM_SUBTARGET =
 	OPTIONS:
 */
 
+@rodata
+OPTION_FLAG_TRUE_STRING := "enable"
 
-OPTION_FLAG_TRUE_STRING :: "enable"
-OPTION_FLAG_FALSE_STRING :: "disable"
+@rodata
+OPTION_FLAG_FALSE_STRING := "disable"
 
 Options :: struct {
 	Vulkan: Vulkan_Options
@@ -171,7 +178,6 @@ _options_get :: proc(options: bit_set[$T], option: T) -> bool where intrinsics.t
 	if option in options do return true
 	else do return false
 }
-
 options_get_all :: proc() -> Options {
 	return engine_configuration.options
 }
@@ -184,7 +190,8 @@ Vulkan_Option_Flag :: enum {
 	Debug_Layers,
 }
 Vulkan_Option_Flags :: bit_set[Vulkan_Option_Flag]
-Vulkan_Option_Flags_Names :: [Vulkan_Option_Flag]string{
+@rodata
+Vulkan_Option_Flags_Names := [Vulkan_Option_Flag]string{
 	.Debug_Layers = "DEBUG_LAYERS"
 }
 
@@ -197,7 +204,7 @@ options_vulkan_get_all :: proc() -> Vulkan_Options {
 */
 
 Settings :: struct {
-	Frames_In_Flight: int
+	Frames_In_Flight: int "FRAMES-IN-FLIGHT"
 }
 
 get_all_settings :: proc() -> Settings {
@@ -220,16 +227,68 @@ load_configuration :: proc() {
 	m := parse_engine_configuration_file(h)
 	defer delete(m)
 
+	for k, v in m do handle_values(k, v)
+
+
+	when CONFIG_VERBOSE_LOG do log.debugf("Loading of file '%v' successful", ENGINE_CONFIGURATION_FILE_NAME)
+
 }
 
 save_configuration :: proc() -> (success: bool) {
-	h, err := os.open(ENGINE_CONFIGURATION_FILE_NAME, os.O_CREATE | os.O_WRONLY, 0o755)
+	h, err := os.open(ENGINE_CONFIGURATION_FILE_NAME, os.O_CREATE | os.O_WRONLY | os.O_TRUNC, 0o755)
 	if err != nil {
 		log.errorf("Engine configuration save attempt failed: %v", err)
 		return false
 	}
 
-	#panic("Finish saving proc")
+	current_offset: i64
+	conf := get_engine_configuration()
+	separator := [?]byte{':', ' '}
+
+	// Handle options
+	for f in conf.options.Vulkan.flags {
+		str := transmute([]byte)Vulkan_Option_Flags_Names[f]
+		os.write_at(h, str[:], current_offset)
+		current_offset += i64(len(str))
+
+		os.write_at(h, separator[:], current_offset)
+		current_offset += i64(len(separator))
+
+		if f in conf.options.Vulkan.flags {
+			flag_true := transmute([]byte)OPTION_FLAG_TRUE_STRING
+			os.write_at(h, flag_true[:], current_offset)
+			current_offset += i64(len(flag_true))
+		} else {
+			flag_false := transmute([]byte)OPTION_FLAG_TRUE_STRING
+			os.write_at(h, flag_false[:], current_offset)
+			current_offset += i64(len(flag_false))
+		}
+	}
+	// Handle settings
+	fields := reflect.struct_fields_zipped(type_of(conf.settings))
+
+	for f in fields {
+		tag := string(f.tag)
+		tag_b := transmute([]byte)tag
+
+		os.write_at(h, tag_b[:], current_offset)
+		current_offset += i64(len(tag_b))
+
+		os.write_at(h, separator[:], current_offset)
+		current_offset += i64(len(separator))
+
+		UNDEFINED_VALUE := [?]byte{'-', '-', '-'}
+
+		val := transmute([]byte)reflect.struct_tag_get(f.tag, f.name)
+		if len(val) == 0 do val = UNDEFINED_VALUE[:]
+
+		os.write_at(h, val[:], current_offset)
+		current_offset += i64(len(val))
+	}
+
+	when CONFIG_VERBOSE_LOG do log.debugf("Saving of file '%v' successful", ENGINE_CONFIGURATION_FILE_NAME)
+	success = true
+	return
 }
 
 parse_engine_configuration_file :: proc(h: os.Handle) -> map[string]any {
@@ -270,7 +329,7 @@ parse_engine_configuration_file :: proc(h: os.Handle) -> map[string]any {
 	}
 
 	key := string(key_buff[:])
-	value := string(key_buff[:])
+	value := string(val_buff[:])
 	_, exists := values[key]
 	if key != "" && value != "" && !exists do handle_values(key, value)
 
@@ -278,26 +337,29 @@ parse_engine_configuration_file :: proc(h: os.Handle) -> map[string]any {
 }
 
 @(private="file")
-handle_values :: proc(key, value:string) {
+handle_values :: proc(key: string, value: any) {
 	switch key {
 		case Vulkan_Option_Flags_Names[.Debug_Layers]:
 			handle_option_value(value, .Debug_Layers)
 		case:
-			log.errorf("Unrecognized option '%v' while loading engine configuration", key)
+			handle_settings_values(key, value)
 	}
 }
 
 @(private="file")
-handle_option_value :: proc(value: string, option: Option_Flag) {
-	if value == OPTION_FLAG_TRUE_STRING do options_enable(option)
-	else if value == OPTION_FLAG_FALSE_STRING do options_disable(option)
-	else do log.errorf("Value for option '%v' is not valid: %v", option, value)
+handle_option_value :: proc(value: any, option: Option_Flag) {
+	v, ok := value.(string)
+	if !ok do log.errorf("Unexpected error when handling option value '%v'", value)
+
+	if v == OPTION_FLAG_TRUE_STRING do options_enable(option)
+	else if v == OPTION_FLAG_FALSE_STRING do options_disable(option)
+	else do log.errorf("Value for option '%v' is not valid: %v", option, v)
 }
 
 @(private="file")
-handle_settings_values :: proc(key, value:string) {
+handle_settings_values :: proc(key: string, value: any) {
 	// TODO: Make use of reflect to maybe use struct tags as a way to parse everything
-	when CONFIG_BUILD_VARIANT != Build_Variants[.Release] do fmt.eprintln("Settings are not yet supported")
+	when CONFIG_BUILD_VARIANT != Build_Variants[.Release] do fmt.eprintln("Settings are not supported yet")
 }
 
 get_enum_based_on_string :: proc "contextless" (value: string, enumerated_array: [$T]string) -> T where intrinsics.type_is_enum(T) {

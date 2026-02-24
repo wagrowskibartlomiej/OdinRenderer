@@ -32,6 +32,9 @@ when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do main :: proc () {
 	context.logger = log.create_console_logger(opt = opts, ident = ident)
 	defer log.destroy_console_logger(context.logger)
 
+	load_configuration()
+	defer save_configuration()
+
 	window_state := create_window(nil)
 	defer cleanup_window(&window_state)
 

@@ -156,7 +156,7 @@ initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allo
 	}
 
 
-	when CONFIG_VERBOSE_LOG do log.debug("Initialization successful")
+	when CONFIG_VERBOSE_LOG do log.debug("Vulkan's initialization successful")
 	return
 }
 
@@ -1095,7 +1095,7 @@ cleanup_device :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallb
 }
 
 check_all_flags :: proc(flags: bit_set[$T]) -> (all_present: bool){
-	for flag in T do if flag not_in flags do return false
+	for flag in T do if flag not_in flags && (flag == .Debug && options_get(.Debug_Layers) ) do return false
 	
 	return true
 }
