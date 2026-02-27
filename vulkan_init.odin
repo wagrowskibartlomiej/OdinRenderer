@@ -15,6 +15,8 @@ when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
 	else do #panic("Platform subtraget '" + ODIN_PLATFORM_SUBTARGET + "' does not have Vulkan surface extension name supplied")
 }
 
+VALIDATION_LAYERS_NAME :: "VK_LAYER_KHRONOS_validation"
+
 Renderer_State :: struct {
 	init: Vulkan_Init_State,
 	frame: Frame_State,
@@ -444,7 +446,13 @@ get_requested_instance_extensions :: proc(allocator := context.allocator) -> [dy
 }
 
 get_requested_instance_layers :: proc(allocator := context.allocator) -> [dynamic]cstring {
-	return nil
+	layers := make([dynamic]cstring, allocator)
+
+	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] {
+		if options_get(.Debug_Layers) do append(&layers, VALIDATION_LAYERS_NAME)
+	}
+
+	return layers
 }
 
 query_instance_extensions :: proc(layer_name: cstring = nil, allocator := context.allocator) -> (ext: []vk.ExtensionProperties, success: bool) {
