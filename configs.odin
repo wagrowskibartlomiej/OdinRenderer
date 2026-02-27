@@ -3,13 +3,16 @@ package engine
 import "core:os"
 import "core:log"
 import "core:fmt"
-import "core:slice"
 import "core:reflect"
+import "core:strconv"
 
 import "base:intrinsics"
 
 @rodata
 ENGINE_CONFIGURATION_FILE_NAME := "configuration.engine"
+
+@rodata
+UNDEFINED_CONFIG_VALUE := [?]byte{'-', '-', '-'}
 
 /*
 	COMPILE TIME CONFIGS:
@@ -27,7 +30,7 @@ ENGINE_CONFIGURATION_FILE_NAME := "configuration.engine"
 	State of options and settings can be saved to file called 'configuration.engine'
 
 	Rules of .engine format:
-	1. Each line defines a one key value pair
+	1. Each line defines a one key value pair (keys: strings, values: Odin's int, f32 and string)
 	2. Key and value pairs are separated with colon
 	3. Whitespaces are ignored
 	4. Key can have only one value, the first occurence is read, after which other encountered values are ignored
@@ -64,9 +67,6 @@ get_engine_configuration :: proc() -> Engine_Configuration {
 
 @(init, private="file")
 assign_configs_to_global_struct :: proc "contextless" () {
-	// Set default in case
-	engine_configuration.settings.Frames_In_Flight = 2
-
 	// Just to group all configuration in one place
 	engine_configuration.configs.target = get_enum_based_on_string(CONFIG_BUILD_TARGET, Build_Targets)
 	engine_configuration.configs.variant = get_enum_based_on_string(CONFIG_BUILD_VARIANT, Build_Variants)
@@ -75,7 +75,14 @@ assign_configs_to_global_struct :: proc "contextless" () {
 
 }
 
-
+/*
+	Values here will be overriden if they can be retrieved from configuraiton file
+	WARN: If values are not specified here they will default to Odin's zeroed state depending on type
+*/
+@init
+enigne_configuration_set_default_values :: proc "contextless" () {
+	engine_configuration.settings.Frames_In_Flight = 2
+}
 
 Build_Target :: enum {
 	Pc, // Windows and Linux
@@ -219,7 +226,7 @@ get_all_settings :: proc() -> Settings {
 load_configuration :: proc() {
 	h, err := os.open(ENGINE_CONFIGURATION_FILE_NAME)
 	if err != nil {
-		when CONFIG_BUILD_VARIANT != Build_Variants[.Release] do fmt.printfln("Failed to open %v file to read options: %v", file, err)
+		when CONFIG_BUILD_VARIANT != Build_Variants[.Release] do fmt.eprintfln("Failed to open '%v' file to read enigne configuration: %v", ENGINE_CONFIGURATION_FILE_NAME, err)
 		return
 	}
 	defer os.close(h)
@@ -235,15 +242,17 @@ load_configuration :: proc() {
 }
 
 save_configuration :: proc() -> (success: bool) {
-	h, err := os.open(ENGINE_CONFIGURATION_FILE_NAME, os.O_CREATE | os.O_WRONLY | os.O_TRUNC, 0o755)
+	h, err := os.open(ENGINE_CONFIGURATION_FILE_NAME, os.O_CREATE | os.O_WRONLY | os.O_TRUNC, 0o644)
 	if err != nil {
 		log.errorf("Engine configuration save attempt failed: %v", err)
 		return false
 	}
+	defer os.close(h)
 
 	current_offset: i64
 	conf := get_engine_configuration()
 	separator := [?]byte{':', ' '}
+	new_line := [?]byte{'\n'}
 
 	// Handle options
 	for f in conf.options.Vulkan.flags {
@@ -259,15 +268,20 @@ save_configuration :: proc() -> (success: bool) {
 			os.write_at(h, flag_true[:], current_offset)
 			current_offset += i64(len(flag_true))
 		} else {
-			flag_false := transmute([]byte)OPTION_FLAG_TRUE_STRING
+			flag_false := transmute([]byte)OPTION_FLAG_FALSE_STRING
 			os.write_at(h, flag_false[:], current_offset)
 			current_offset += i64(len(flag_false))
 		}
+
+		os.write_at(h, new_line[:], current_offset)
+		current_offset += i64(len(new_line))
 	}
 	// Handle settings
 	fields := reflect.struct_fields_zipped(type_of(conf.settings))
 
-	for f in fields {
+	for f, i in fields {
+		field := f
+
 		tag := string(f.tag)
 		tag_b := transmute([]byte)tag
 
@@ -277,13 +291,30 @@ save_configuration :: proc() -> (success: bool) {
 		os.write_at(h, separator[:], current_offset)
 		current_offset += i64(len(separator))
 
-		UNDEFINED_VALUE := [?]byte{'-', '-', '-'}
+		val_any := reflect.struct_field_value(conf.settings, f)
 
-		val := transmute([]byte)reflect.struct_tag_get(f.tag, f.name)
-		if len(val) == 0 do val = UNDEFINED_VALUE[:]
+		switch t in val_any {
+		case int:
+			int_buff: [64]byte
+			int_str := transmute([]byte) strconv.write_int(int_buff[:], i64(t), 10)
+			os.write_at(h, int_str[:], current_offset)
+			current_offset += i64(len(int_str))
+		case string:
+			s := transmute([]byte)t
+			os.write_at(h, s[:], current_offset)
+			current_offset += i64(len(s[:]))
+		case f32:
+			float_buff: [64]byte
+			float_str := transmute([]byte) strconv.write_float(float_buff[:], f64(t), 'G', -1, 32)
+			os.write_at(h, float_str[:], current_offset)
+			current_offset += i64(len(float_str))
+		case:
+			os.write_at(h, UNDEFINED_CONFIG_VALUE[:], current_offset)
+			current_offset += i64(len(UNDEFINED_CONFIG_VALUE))
+		}
 
-		os.write_at(h, val[:], current_offset)
-		current_offset += i64(len(val))
+		os.write_at(h, new_line[:], current_offset)
+		current_offset += i64(len(new_line))
 	}
 
 	when CONFIG_VERBOSE_LOG do log.debugf("Saving of file '%v' successful", ENGINE_CONFIGURATION_FILE_NAME)
@@ -291,7 +322,7 @@ save_configuration :: proc() -> (success: bool) {
 	return
 }
 
-parse_engine_configuration_file :: proc(h: os.Handle) -> map[string]any {
+parse_engine_configuration_file :: proc(h: os.Handle) -> map[string]string {
 	data, success := os.read_entire_file_from_handle(h)
 	if !success do return nil
 	defer delete(data)
@@ -303,7 +334,7 @@ parse_engine_configuration_file :: proc(h: os.Handle) -> map[string]any {
 	val_buff := make([dynamic]byte, 0, 128)
 	defer delete(val_buff)
 
-	values := make(map[string]any)
+	values := make(map[string]string)
 	
 	reading_key := true
 	for char in data {
@@ -313,10 +344,10 @@ parse_engine_configuration_file :: proc(h: os.Handle) -> map[string]any {
 		case '\n':
 			reading_key = true
 			key := string(key_buff[:])
-			value := string(val_buff[:])
+			val := string(val_buff[:])
 
 			_, exists := values[key]
-			if !exists do handle_values(key, value)
+			if !exists do handle_values(key, val)
 
 			clear(&key_buff)
 			clear(&val_buff)
@@ -329,15 +360,15 @@ parse_engine_configuration_file :: proc(h: os.Handle) -> map[string]any {
 	}
 
 	key := string(key_buff[:])
-	value := string(val_buff[:])
+	val := string(val_buff[:])
 	_, exists := values[key]
-	if key != "" && value != "" && !exists do handle_values(key, value)
+	if key != "" && len(val_buff) != 0 && !exists do handle_values(key, val)
 
 	return values
 }
 
 @(private="file")
-handle_values :: proc(key: string, value: any) {
+handle_values :: proc(key: string, value: string) {
 	switch key {
 		case Vulkan_Option_Flags_Names[.Debug_Layers]:
 			handle_option_value(value, .Debug_Layers)
@@ -347,19 +378,46 @@ handle_values :: proc(key: string, value: any) {
 }
 
 @(private="file")
-handle_option_value :: proc(value: any, option: Option_Flag) {
-	v, ok := value.(string)
-	if !ok do log.errorf("Unexpected error when handling option value '%v'", value)
-
-	if v == OPTION_FLAG_TRUE_STRING do options_enable(option)
-	else if v == OPTION_FLAG_FALSE_STRING do options_disable(option)
-	else do log.errorf("Value for option '%v' is not valid: %v", option, v)
+handle_option_value :: proc(value: string, option: Option_Flag) {
+	if value == OPTION_FLAG_TRUE_STRING do options_enable(option)
+	else if value == OPTION_FLAG_FALSE_STRING do options_disable(option)
+	else do log.errorf("Value for option '%v' is not valid (allowed values are '%V' & '%v'): %v", option, OPTION_FLAG_TRUE_STRING, OPTION_FLAG_FALSE_STRING, value)
 }
 
 @(private="file")
-handle_settings_values :: proc(key: string, value: any) {
-	// TODO: Make use of reflect to maybe use struct tags as a way to parse everything
-	when CONFIG_BUILD_VARIANT != Build_Variants[.Release] do fmt.eprintln("Settings are not supported yet")
+handle_settings_values :: proc(key, value: string) {
+	settings := engine_configuration.settings
+
+	fields := reflect.struct_fields_zipped(type_of(settings))
+
+	for &f in fields {
+		if key != string(f.tag) do continue
+
+		struct_field := reflect.struct_field_value(engine_configuration.settings, f)
+
+		switch &field in struct_field {
+		case int:
+			integer, ok := strconv.parse_int(value)
+			if !ok {
+				log.errorf("Failed to parse integer from string when handling settings values: value '%v' of key '%v' for struct tag '%v'", value, key, string(f.tag))
+				break
+			}
+
+			field = integer
+		case string:
+			field = value
+		case f32:
+			floating, ok := strconv.parse_f32(value)
+			if !ok {
+				log.errorf("Failed to parse 32bit float from string when handling settings values: value '%v' of key '%v' for struct tag '%v'", value, key, string(f.tag))
+				break
+			}
+
+			field = floating
+		case:
+			log.errorf("Unhandled settings value '%v' of key '%v' for struct tag '%v': unrecognized type", value, key, string(f.tag))
+		}
+	}
 }
 
 get_enum_based_on_string :: proc "contextless" (value: string, enumerated_array: [$T]string) -> T where intrinsics.type_is_enum(T) {
