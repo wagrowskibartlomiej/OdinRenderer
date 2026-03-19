@@ -22,6 +22,7 @@ when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do main :: proc () {
 		}
 	}
 
+
 	opts := log.Options{.Level,.Terminal_Color,.Thread_Id}
 	ident := "ENGINE"
 
@@ -32,7 +33,10 @@ when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do main :: proc () {
 	context.logger = log.create_console_logger(opt = opts, ident = ident)
 	defer log.destroy_console_logger(context.logger)
 
-	load_configuration()
+	initialize_engine_configuration()
+	defer cleanup_engine_configuration()
+
+	load_configuration(get_engine_configuration()._settings_strings_arena.allocator)
 	defer save_configuration()
 
 	window_state := create_window(nil)

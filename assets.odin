@@ -1,6 +1,6 @@
 package engine
 
-import "core:os"
+import os "core:os/old"
 import "core:log"
 import "core:slice"
 

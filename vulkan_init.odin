@@ -1,3 +1,4 @@
+#+feature using-stmt
 package engine
 
 import "base:runtime"
@@ -9,6 +10,8 @@ import "core:strings"
 
 import "vendor:glfw"
 import vk "vendor:vulkan"
+
+//TODO: Change debug layers to be feature option, detected at runtime
 
 when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
 	when ODIN_PLATFORM_SUBTARGET == .Android do VK_ANDROID_SURFACE_EXT_NAME :: "VK_KHR_android_surface"
@@ -111,7 +114,7 @@ initialize_vulkan :: proc(window_state: ^Window_State, allocator := context.allo
 		return 
 	}
 
-	if options_get(.Debug_Layers) {
+	if options_get_unsafe(.Debug_Layers) {
 		success = create_debug_utils(&state.init, callbacks)
 		if !success {
 			log.fatal("Cannot create debug utils messenger")
@@ -172,7 +175,7 @@ cleanup_vulkan :: proc(state: ^Renderer_State, allocator := context.allocator, c
 	if .Surface in state.init.resource_flags do cleanup_surface(&state.init, callbacks)
 	if .Device in state.init.resource_flags do cleanup_device(&state.init, callbacks)
 	if .Physical_Device in state.init.resource_flags do cleanup_physical_devices(&state.init, allocator)
-	if options_get(.Debug_Layers) do if .Debug in state.init.resource_flags do cleanup_debug_utils(&state.init, callbacks)
+	if options_get_unsafe(.Debug_Layers) do if .Debug in state.init.resource_flags do cleanup_debug_utils(&state.init, callbacks)
 	if .Instance in state.init.resource_flags do cleanup_instance(&state.init, allocator, callbacks)
 	if .Library in state.init.resource_flags do unload_vklib(state)
 }
@@ -434,7 +437,7 @@ get_requested_instance_extensions :: proc(allocator := context.allocator) -> [dy
 	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] {
 		ext := glfw.GetRequiredInstanceExtensions()
 		for e in ext do append(&extensions, e)
-		if options_get(.Debug_Layers) do append(&extensions, vk.EXT_DEBUG_UTILS_EXTENSION_NAME)
+		if options_get_unsafe(.Debug_Layers) do append(&extensions, vk.EXT_DEBUG_UTILS_EXTENSION_NAME)
 	} when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
 		when ODIN_PLATFORM_SUBTARGET == .Android {
 			append(&extensions, vk.KHR_SURFACE_EXTENSION_NAME)
@@ -449,7 +452,7 @@ get_requested_instance_layers :: proc(allocator := context.allocator) -> [dynami
 	layers := make([dynamic]cstring, allocator)
 
 	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] {
-		if options_get(.Debug_Layers) do append(&layers, VALIDATION_LAYERS_NAME)
+		if options_get_unsafe(.Debug_Layers) do append(&layers, VALIDATION_LAYERS_NAME)
 	}
 
 	return layers
@@ -1103,7 +1106,7 @@ cleanup_device :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallb
 }
 
 check_all_flags :: proc(flags: bit_set[$T]) -> (all_present: bool){
-	for flag in T do if flag not_in flags && (flag == .Debug && options_get(.Debug_Layers) ) do return false
+	for flag in T do if flag not_in flags && (flag == .Debug && options_get_unsafe(.Debug_Layers) ) do return false
 	
 	return true
 }
