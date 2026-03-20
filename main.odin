@@ -1,5 +1,6 @@
 package render
 
+import os "core:os/old"
 import "core:fmt"
 import "core:log"
 import "core:mem"
@@ -44,15 +45,22 @@ when DESKTOP_BUILD do main :: proc () {
 
 	context.user_ptr = &global_app_state
 
-	global_app_state.assets.allocator = context.allocator
-	global_app_state.assets.binary_data_allocator = context.allocator
-
 	when EDITOR_BUILD {
-		init_assets_editor(&global_app_state.assets)
-		load_assets_dir_to_map_editor(&global_app_state.assets, context.temp_allocator)
-		defer cleanup_assets_editor(&global_app_state.assets)
+		success: bool
+		global_app_state.assets, success = initalize_assets()
+		if !success do panic("Cannot initalize assets")
+		defer {
+			build_asset_pack(&global_app_state.assets.items)
+			s := cleanup_assets(&global_app_state.assets)
+			if !s do panic("Cannot cleanup assets")
+		}
 	} else {
+		global_app_state.assets.allocator = context.allocator
+		global_app_state.assets.binary_data_allocator = context.allocator
 		loaded: bool
+		h, _ := os.open("assets.pack")
+		defer os.close(h)
+		global_app_state.assets.asset_pack_handle = h
 		global_app_state.assets.items, global_app_state.assets.pkgs, loaded = load_assets_immediate(global_app_state.assets.asset_pack_handle, context.allocator)
 		if !loaded do return
 		defer cleanup_assets_map(&global_app_state.assets)

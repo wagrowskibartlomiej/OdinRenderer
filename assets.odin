@@ -1,7 +1,8 @@
+#+feature using-stmt
 package render
 
 import "base:runtime"
-import "core:os"
+import os "core:os/old"
 import "core:log"
 import "core:slice"
 import "core:strings"
@@ -13,6 +14,7 @@ ASSET_PACK_HEADER : string : "ODINRENDERERASSETPACK"
 ASSET_PACK_VERSION : u64 : 1
 
 PKG_BACKUP_NAME :: "PKGUNRESLOVED"
+//TODO:  I need to make something like header files for this, just gonna use #type keyword and the the API should be alright
 
 // TODO: Optimally building proccess should generate enum values of packages and use that instead of strings
 Asset_Runtime :: struct {
@@ -134,15 +136,45 @@ get_asset_memory :: proc(state: ^Assets_State, type: Asset_Type, name, pkg: stri
 	return
 }
 
-initalize_assets :: proc() {
+initalize_assets :: proc(allocator := context.allocator, binary_data_allocator := context.allocator, temp_allocator := context.temp_allocator) -> (state: Assets_State, success: bool) {
 	// for both inizalize structure datas with map pkg interner ect,
 	// give option to pass custom allocators
 	// then for EDITOR load assets dir to map editor etc.
 	// for BUILD load asset pack
+	state.allocator = allocator
+	state.binary_data_allocator = binary_data_allocator
+
+	when EDITOR_BUILD {
+		state.items = make(map[xxhash.xxh_u64]Asset_Runtime, allocator)
+		defer if !success do delete(state.items)
+
+		err := strings.intern_init(&state.pkgs, allocator, allocator)
+		if err != nil {
+			log.errorf("Pkgs name interner creation failed: %v", err)
+			success = false
+			return
+		}
+		defer if !success do strings.intern_destroy(&state.pkgs)
+
+		success = load_assets_dir_to_map_editor(&state, temp_allocator)
+		success or_return
+	} else {
+
+	}
+
+	when VERBOSE_LOG do log.debug("Assets state initialization successful")
+
+	success = true
+	return
 }
 
-cleanup_assets :: proc() {
 
+cleanup_assets :: proc(state: ^Assets_State) -> (success: bool) {
+	when EDITOR_BUILD do cleanup_assets_editor(state)
+
+	when VERBOSE_LOG do log.debug("Assets state cleanup successful")
+	success = true
+	return
 }
 
 // You can pass pkg name to procedure to make it use within asset, but if left empty attempt will be made to get it from directory that contains the asset
@@ -267,10 +299,10 @@ load_assets_dir_to_map_editor :: proc(state: ^Assets_State, temp_allocator := co
 }
 
 get_file_pkg :: proc(filename: string, allocator := context.allocator, temp_allocator := context.temp_allocator) -> (dir: string, success: bool) {
-	absolute: string
-	absolute, success = fp.abs(filename, temp_allocator)
-	if !success {
+	absolute, path_err := fp.abs(filename, temp_allocator)
+	if path_err != nil {
 		log.errorf("Cannot get a directory of a file '%v'", filename)
+		success = false
 		return
 	}
 	defer delete(absolute, temp_allocator)
@@ -480,7 +512,6 @@ build_asset_pack :: proc(assets: ^map[xxhash.xxh_u64]Asset_Runtime) {
 
 		binary_data_offset += i64(slice.size(mem))
 	}
-
 }
 
 get_asset_descriptor_file_byte_size :: proc(a: ^Asset_Runtime) -> (size: i64) {
@@ -514,7 +545,8 @@ generate_id_for_asset :: proc(hash_state: ^xxhash.XXH3_state, type: Asset_Type, 
 }
 
 load_asset_mem :: proc(a: ^Asset_Runtime, handle: Asset_Pack_Handle, allocator := context.allocator) -> (success: bool) {
-	if type_of(a.memory) != Asset_Memory_File_Entry {
+	_, is_descriptor := a.memory.(Asset_Memory_File_Entry)
+	if !is_descriptor {
 		log.warn("Called load asset memory while memory was not recognized as unloaded, possible error")
 		return false
 	}
@@ -568,12 +600,6 @@ load_assets_immediate :: proc(handle: Asset_Pack_Handle, allocator := context.al
 	return
 }
 
-init_assets_editor :: proc(state: ^Assets_State) {
-	state.items = make(map[xxhash.xxh_u64]Asset_Runtime, state.allocator)
-	strings.intern_init(&state.pkgs, state.allocator, state.allocator)
-}
-
-
 load_assets_map :: proc(handle: Asset_Pack_Handle, allocator := context.allocator) -> (m: map[xxhash.xxh_u64]Asset_Runtime, pkgs: strings.Intern, success: bool) {	
 	header_offset: i64
 	
@@ -581,9 +607,8 @@ load_assets_map :: proc(handle: Asset_Pack_Handle, allocator := context.allocato
 	header_offset += i64(slice.size(asset_pack_name_b))
 	header_offset += size_of(ASSET_PACK_VERSION)
 	asset_count: i64 
-	asset_count_b := transmute([size_of(asset_count)]byte)asset_count
 	
-	n, err := os.read_at(handle.(os.Handle), asset_count_b[:], header_offset)
+	n, err := os.read_at(handle.(os.Handle), slice.bytes_from_ptr(&asset_count, size_of(asset_count)), header_offset)
 	if err != nil || n != size_of(i64le) {
 		log.errorf("Cannot read assets map count from file (bytes read: %v), error: %v", n, err)
 		return
@@ -726,6 +751,9 @@ load_assets_map :: proc(handle: Asset_Pack_Handle, allocator := context.allocato
 			name = string(a._name_backing[:]),
 			memory = Asset_Memory_File_Entry{a.offset, a.length}
 		}
+
+		item, e := m[cast(xxhash.xxh_u64)a.hash]
+		log.warnf("Item: (exists %v) %v",e, item )
 
 		success = true
 	}

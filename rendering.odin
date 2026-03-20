@@ -10,7 +10,7 @@ Render_Passes_State :: struct {
 }
 
 Pipelines_State :: struct {
-	traingle: Pipeline_State,
+	triangle: Pipeline_State,
 }
 
 Pipeline_State :: struct {
@@ -112,55 +112,58 @@ cleanup_renderer_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Alloca
 create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
 	if .Pipelines in state.resource_flags do log.warn("Called pipelines creation when resource flag is set, possible error")
 
-	vertex, vertex_present := get_asset_memory(ass_state, .Shader, "default_vertex.spv", "spirv")
+	v, vertex_present := get_asset_memory(ass_state, .Shader, "default_vertex.spv", "spirv")
 	if !vertex_present {
 		log.error("Cannot create graphics pipelines: Missing vertex shader memory in assets pool")
 		return
 	}
 
 
-	fragment, fragment_present := get_asset_memory(ass_state, .Shader, "default_fragment.spv", "spirv")
+	f, fragment_present := get_asset_memory(ass_state, .Shader, "default_fragment.spv", "spirv")
 	if !fragment_present {
-		log.error("Cannot create graphics pipelines: Missing vertex shader memory in assets pool")
+		log.error("Cannot create graphics pipelines: Missing fragment shader memory in assets pool")
 		return
 	}
 
+	vertex, _ := v.([]u32)
+	fragment, _ := f.([]u32)
+
 	vertex_shader_create_info := vk.ShaderModuleCreateInfo{
 		sType = .SHADER_MODULE_CREATE_INFO,
-		pCode = raw_data(vertex.([]u32)),
-		codeSize = slice.size(vertex.([]u32)),
+		pCode = raw_data(vertex),
+		codeSize = slice.size(vertex),
 	}
 
-	result := vk.CreateShaderModule(state.device.handle, &vertex_shader_create_info, callbacks, &state.pipelines.traingle.vertex_module)
+	result := vk.CreateShaderModule(state.device.handle, &vertex_shader_create_info, callbacks, &state.pipelines.triangle.vertex_module)
 	if result != .SUCCESS {
 		log.errorf("Vertex shader module creation fail: %v", result)
 		return
 	}
-	defer if !success do vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.vertex_module, callbacks)
+	defer if !success do vk.DestroyShaderModule(state.device.handle, state.pipelines.triangle.vertex_module, callbacks)
 
 	fragment_shader_create_info := vk.ShaderModuleCreateInfo{
 		sType = .SHADER_MODULE_CREATE_INFO,
-		pCode = raw_data(fragment.([]u32)),
-		codeSize = slice.size(fragment.([]u32)),
+		pCode = raw_data(fragment),
+		codeSize = slice.size(fragment),
 	}
 
-	result = vk.CreateShaderModule(state.device.handle, &fragment_shader_create_info, callbacks, &state.pipelines.traingle.fragment_module)
+	result = vk.CreateShaderModule(state.device.handle, &fragment_shader_create_info, callbacks, &state.pipelines.triangle.fragment_module)
 	if result != .SUCCESS {
 		log.errorf("Fragment shader module creation fail: %v", result)
 		return
 	}
-	defer if !success do vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.fragment_module, callbacks)
+	defer if !success do vk.DestroyShaderModule(state.device.handle, state.pipelines.triangle.fragment_module, callbacks)
 
 	vertex_stage_create_info := vk.PipelineShaderStageCreateInfo{
 		sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-		module = state.pipelines.traingle.vertex_module,
+		module = state.pipelines.triangle.vertex_module,
 		pName = "main",
 		stage = {.VERTEX},
 	}
 
 	fragment_stage_create_info := vk.PipelineShaderStageCreateInfo{
 		sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-		module = state.pipelines.traingle.fragment_module,
+		module = state.pipelines.triangle.fragment_module,
 		pName = "main",
 		stage = {.FRAGMENT},
 	}
@@ -230,12 +233,12 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_
 		sType = .PIPELINE_LAYOUT_CREATE_INFO,
 	}
 
-	result = vk.CreatePipelineLayout(state.device.handle, &layout_info, callbacks, &state.pipelines.traingle.layout)
+	result = vk.CreatePipelineLayout(state.device.handle, &layout_info, callbacks, &state.pipelines.triangle.layout)
 	if result != .SUCCESS {
 		log.errorf("Pipeline layout creation fail: %v", result)
 		return
 	}
-	defer if !success do vk.DestroyPipelineLayout(state.device.handle, state.pipelines.traingle.layout, callbacks)
+	defer if !success do vk.DestroyPipelineLayout(state.device.handle, state.pipelines.triangle.layout, callbacks)
 
 	depth := vk.PipelineDepthStencilStateCreateInfo{
 		sType = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
@@ -261,11 +264,11 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_
 		pColorBlendState = &blend, 
 		renderPass = state.render_passes.main_render_pass,
 		subpass = 0,
-		layout = state.pipelines.traingle.layout,
+		layout = state.pipelines.triangle.layout,
 	}
 
 	NO_CACHE : vk.PipelineCache : {}
-	result = vk.CreateGraphicsPipelines(state.device.handle, NO_CACHE, 1, &pipeline_create_info, callbacks, &state.pipelines.traingle.handle)
+	result = vk.CreateGraphicsPipelines(state.device.handle, NO_CACHE, 1, &pipeline_create_info, callbacks, &state.pipelines.triangle.handle)
 	if result != .SUCCESS {
 		log.errorf("Graphics pipelines creation fail: %v", result)
 		return
@@ -285,16 +288,16 @@ cleanup_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := conte
 		return
 	}
 
-	vk.DestroyPipeline(state.device.handle, state.pipelines.traingle.handle, callbacks)
+	vk.DestroyPipeline(state.device.handle, state.pipelines.triangle.handle, callbacks)
 	when VERBOSE_LOG do log.debug("Graphics pipelines destroyed")
 
-	vk.DestroyPipelineLayout(state.device.handle, state.pipelines.traingle.layout, callbacks)
+	vk.DestroyPipelineLayout(state.device.handle, state.pipelines.triangle.layout, callbacks)
 	when VERBOSE_LOG do log.debug("Pipeline layout destroyed")
 
-	vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.vertex_module, callbacks)
+	vk.DestroyShaderModule(state.device.handle, state.pipelines.triangle.vertex_module, callbacks)
 	when VERBOSE_LOG do log.debug("Vertex shader module destroyed")
 
-	vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.fragment_module, callbacks)
+	vk.DestroyShaderModule(state.device.handle, state.pipelines.triangle.fragment_module, callbacks)
 	when VERBOSE_LOG do log.debug("Fragment shader module destroyed")
 
 	state.resource_flags &~= {.Pipelines}
