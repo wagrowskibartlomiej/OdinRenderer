@@ -1,5 +1,5 @@
 #+build linux
-package render
+package engine
 
 import "core:log"
 import "core:mem"
@@ -10,8 +10,7 @@ import "core:c"
 
 import android "./androidglue/ndkbindings"
 
-when !DESKTOP_BUILD {
-
+when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
 Android_State :: struct {
 	app_ptr: ^android.android_app,
 	app_active: bool,

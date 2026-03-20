@@ -1,4 +1,4 @@
-package render
+package engine
 
 import "core:log"
 import "core:slice"
@@ -84,10 +84,10 @@ create_render_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Allocatio
 		log.errorf("Render passes creation failed: %v", result)
 		return
 	}
-	when VERBOSE_LOG do log.debug("Render passes created")
+	when CONFIG_VERBOSE_LOG do log.debug("Render passes created")
 
 	state.resource_flags |= {.Render_Passes}
-	when VERBOSE_LOG do log.debug("Render passes resource flag set")
+	when CONFIG_VERBOSE_LOG do log.debug("Render passes resource flag set")
 
 	success = true
 	return
@@ -100,10 +100,10 @@ cleanup_renderer_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Alloca
 	}
 
 	vk.DestroyRenderPass(state.device.handle, state.render_passes.main_render_pass, callbacks)
-	when VERBOSE_LOG do log.debug("Render passes destroyed")
+	when CONFIG_VERBOSE_LOG do log.debug("Render passes destroyed")
 
 	state.resource_flags &~= {.Render_Passes}
-	when VERBOSE_LOG do log.debug("Render passes resource flag unset")
+	when CONFIG_VERBOSE_LOG do log.debug("Render passes resource flag unset")
 }
 
 create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
@@ -265,10 +265,10 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := contex
 		log.errorf("Graphics pipelines creation fail: %v", result)
 		return
 	}
-	when VERBOSE_LOG do log.debug("Graphics pipelines created")
+	when CONFIG_VERBOSE_LOG do log.debug("Graphics pipelines created")
 
 	state.resource_flags |= {.Pipelines}
-	when VERBOSE_LOG do log.debug("Graphics pipelines resource flag set")
+	when CONFIG_VERBOSE_LOG do log.debug("Graphics pipelines resource flag set")
 
 	success = true
 	return
@@ -281,25 +281,25 @@ cleanup_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := conte
 	}
 
 	vk.DestroyPipeline(state.device.handle, state.pipelines.traingle.handle, callbacks)
-	when VERBOSE_LOG do log.debug("Graphics pipelines destroyed")
+	when CONFIG_VERBOSE_LOG do log.debug("Graphics pipelines destroyed")
 
 	vk.DestroyPipelineLayout(state.device.handle, state.pipelines.traingle.layout, callbacks)
-	when VERBOSE_LOG do log.debug("Pipeline layout destroyed")
+	when CONFIG_VERBOSE_LOG do log.debug("Pipeline layout destroyed")
 
 	vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.vertex_module, callbacks)
-	when VERBOSE_LOG do log.debug("Vertex shader module destroyed")
+	when CONFIG_VERBOSE_LOG do log.debug("Vertex shader module destroyed")
 
 	vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.fragment_module, callbacks)
-	when VERBOSE_LOG do log.debug("Fragment shader module destroyed")
+	when CONFIG_VERBOSE_LOG do log.debug("Fragment shader module destroyed")
 
 	delete(state.pipelines.traingle.vertex_shader.memory.([]u32), allocator)
-	when VERBOSE_LOG do log.debug("Vertex shader memory freed")
+	when CONFIG_VERBOSE_LOG do log.debug("Vertex shader memory freed")
 
 	delete(state.pipelines.traingle.fragment_shader.memory.([]u32), allocator)
-	when VERBOSE_LOG do log.debug("Fragment shader memory freed")
+	when CONFIG_VERBOSE_LOG do log.debug("Fragment shader memory freed")
 
 	state.resource_flags &~= {.Pipelines}
-	when VERBOSE_LOG do log.debug("Pipelines resource flag unset")
+	when CONFIG_VERBOSE_LOG do log.debug("Pipelines resource flag unset")
 }
 
 init_frame :: proc(init: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (state: Frame_State) { 
@@ -309,7 +309,7 @@ init_frame :: proc(init: ^Vulkan_Init_State, allocator := context.allocator, tem
 		return
 	}
 
-	when VERBOSE_LOG do log.debug("Frame initalization successful")
+	when CONFIG_VERBOSE_LOG do log.debug("Frame initalization successful")
 	return
 }
 
@@ -324,7 +324,9 @@ draw_frame :: proc(init: ^Vulkan_Init_State, state: ^Frame_Sync) {
 create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
 	if .Frame_Sync in state.resources_flags do log.warn("Called frame synchronization creation when resource flag is set, possible error")
 
-	state.sync = make([]Frame_Sync, FRAMES_IN_FLIGHT, allocator)
+	fif := get_engine_configuration().settings.Frames_In_Flight
+
+	state.sync = make([]Frame_Sync, fif, allocator)
 	defer if !success do delete(state.sync, allocator)
 
 	fence_create_info := vk.FenceCreateInfo{
@@ -337,7 +339,7 @@ create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocat
 	defer delete(fence_tracker)
 	defer if !success do for f in fence_tracker do vk.DestroyFence(init.device.handle, f, callbacks)
 
-	for i in 0 ..< FRAMES_IN_FLIGHT {
+	for i in 0 ..< fif {
 		result := vk.CreateFence(init.device.handle, &fence_create_info, callbacks, &state.sync[i].frame_done)
 		if result != .SUCCESS {
 			log.errorf("Fence creation error: %v", result)
@@ -352,7 +354,7 @@ create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocat
 	defer delete(sem_tracker)
 	defer if !success do for s in sem_tracker do vk.DestroySemaphore(init.device.handle, s, callbacks)
 
-	for i in 0 ..< FRAMES_IN_FLIGHT {
+	for i in 0 ..< fif {
 		result := vk.CreateSemaphore(init.device.handle, &semaphore_create_info, callbacks, &state.sync[i].image_available)
 		if result != .SUCCESS {
 			log.errorf("Semaphore creation error: %v", result)
@@ -368,7 +370,7 @@ create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocat
 
 
 	state.resources_flags |= {.Frame_Sync}
-	when VERBOSE_LOG do log.debug("Frame synchronization resource flag set")
+	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization resource flag set")
 
 	success = true
 	return
@@ -385,12 +387,12 @@ cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, alloca
 		vk.DestroySemaphore(init.device.handle, s.render_done, callbacks)
 		vk.DestroyFence(init.device.handle, s.frame_done, callbacks)
 	}
-	when VERBOSE_LOG do log.debuy("Frame synchronization destroyed")
+	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization destroyed")
 
 	delete(state.sync, allocator)
-	when VERBOSE_LOG do log.debug("Frame synchronization cleaned up")
+	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization cleaned up")
 
 	state.resources_flags &~= {.Frame_Sync}
-	when VERBOSE_LOG do log.debug("Frame synchronization resource flag unset")
+	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization resource flag unset")
 }
 

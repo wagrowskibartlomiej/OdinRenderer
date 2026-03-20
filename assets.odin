@@ -1,9 +1,8 @@
-package render
+package engine
 
-import "core:os"
+import os "core:os/old"
 import "core:log"
 import "core:slice"
-
 
 
 Asset :: struct {
@@ -70,7 +69,7 @@ load_from_asset_dir :: proc(name: string, allocator := context.allocator, temp_a
 		log.error("Asset pack cannot be loaded with this procedure")
 		return
 	}
-	when VERBOSE_LOG do log.debugf("Asset extension of file '%v' detected as: %v", name, asset.extension)
+	when CONFIG_VERBOSE_LOG do log.debugf("Asset extension of file '%v' detected as: %v", name, asset.extension)
 
 	if asset.type == nil {
 		log.errorf("Cannot determine asset type that file '%v' contains", name)
@@ -79,7 +78,7 @@ load_from_asset_dir :: proc(name: string, allocator := context.allocator, temp_a
 		log.error("Asset pack cannot be loaded with this procedure")
 		return
 	}
-	when VERBOSE_LOG do log.debugf("Asset type from file '%v' detected as: %v", name, asset.type)
+	when CONFIG_VERBOSE_LOG do log.debugf("Asset type from file '%v' detected as: %v", name, asset.type)
 
 	switch asset.type {
 		case .Mesh: 
@@ -152,8 +151,11 @@ get_asset_type_from_filename_extension :: proc(name: string, temp_allocator := c
 }
 
 load_from_asset_pack :: proc(name: string, asset_pack_handle: rawptr) -> (asset: Asset, success: bool) {
-	when DESKTOP_BUILD do return load_from_asset_pack_desktop(name, asset_pack_handle)
-	else do return load_from_asset_pack_android(name, asset_pack_handle)
+	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do return load_from_asset_pack_desktop(name, asset_pack_handle)
+	else when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
+		when ODIN_PLATFORM_SUBTARGET == .Android do return load_from_asset_pack_android(name, asset_pack_handle)
+		else do #panic("Platform subtarget '" + ODIN_PLATFORM_SUBTARGET + "' does not have implemnted functionality of loading asset from pack")
+	}
 }
 
 load_from_asset_pack_desktop :: proc(name: string, asset_pack_handle: rawptr) -> (asset: Asset, success: bool) {

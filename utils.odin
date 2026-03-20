@@ -1,4 +1,4 @@
-package render
+package engine
 
 // Extracts variant part of version from Vulkan encoded version number.
 decode_vk_version_variant :: proc "contextless" (version: u32) -> u32 {
