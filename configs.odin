@@ -49,10 +49,12 @@ CONFIG_FILE_SEPRATOR := [?]byte{':', ' '} // Space after colon is for readabilit
 CONFIG_FILE_NEW_LINE := [?]byte{'\n'}
 
 @rodata
-OPTION_FLAG_TRUE_STRING := "ENABLED"
+OPTION_FLAG_TRUE_STRING := "enable"
 
 @rodata
-OPTION_FLAG_FALSE_STRING := "DISABLED"
+OPTION_FLAG_FALSE_STRING := "disable"
+
+CONFIG_TAG :: "config"
 
 /*
 	COMPILE TIME CONFIGS:
@@ -81,7 +83,13 @@ OPTION_FLAG_FALSE_STRING := "DISABLED"
 	6. Feature options should always be checked at runtime for availability
 	NOTE: Encoding is UTF-8 (file data is iterated as runes), but usage of some control characters like \t and \r etc. is not covered at the moment
 
+	NOTE: When loading values into global state, struct is checked for being Option(_Feature) or Option(_Feature)_Flags at runtime,
+	      by checking it's properties to match what is expected HOWEVER it can be mistaken with similar struct
+
 	TODO: Maybe I should add something like a prefix tag for structs to add ability to reuse them (which is not possible because config tags need to be unique right now)
+	TODO: Add struct tag key "defaults-required" with values "panic" or "warn" (defaults to warn if no key is passed) to be notified if,
+              procedure for settings defaults is not handled in switch statement in defaults procedure
+	      (or maybe just add checking if field is names and is not passed anything?)
 */
 
 /*
@@ -179,7 +187,7 @@ Option_Feature_Flags :: struct($T: typeid) where intrinsics.type_is_enum(T) {
 
 Vulkan_Options :: struct {
 	features: Option_Feature_Flags(Vulkan_Option_Flag),
-	presentation: Option_Feature(Vulkan_Presentation_Option) "config:Vulkan V-Sync",
+	presentation: Option_Feature(Vulkan_Presentation_Option) `config:"Vulkan V-Sync"`,
 }
 
 Vulkan_Option_Flag :: enum {
@@ -199,14 +207,14 @@ Vulkan_Presentation_Option :: enum {
 }
 @rodata
 Vulkan_Presentation_Option_Names := [Vulkan_Presentation_Option]string{
-	.FIFO = "ENABLED",
-	.Immediate = "DISABLED",
-	.Mailbox = "FAST",
-	.FIFO_Relaxed = "ADAPTIVE"
+	.FIFO = "enable",
+	.Immediate = "disable",
+	.Mailbox = "fast",
+	.FIFO_Relaxed = "adaptive"
 }
 
 Settings :: struct {
-	Frames_In_Flight: int "config:Frames in flight"
+	Frames_In_Flight: int `config:"Frames in flight"`
 }
 
 Strings_Arena :: struct {
@@ -226,18 +234,10 @@ initialize_engine_configuration :: proc (arena_allocator := context.allocator, b
 	engine_configuration.configs.tracking_allocator = CONFIG_TRACKING_ALLOCATOR
 
 	engine_configuration_set_default_values()
-	// TODO: There is an way to check for every options struct that has flags and if it has names field,
-	//	 then either log warning or crash app if build variant is editor,
-	//	 but for now just assigning names hardcoded way is the way to go, the rest is more important
-	engine_configuration.options.Vulkan.features.names = &Vulkan_Option_Flags_Names
-
-
 	init_settings_strings_arena(arena_allocator, block_allocator)
-	load_configuration(temp_allocator)
 }
 
 cleanup_engine_configuration :: proc() {
-	save_configuration()
 	cleanup_settings_strings_arena()
 }
 
@@ -329,13 +329,13 @@ options_vulkan_get_all :: proc() -> Vulkan_Options {
 
 set_all_default_options :: proc() {
 	for field in reflect.struct_fields_zipped(Options) {
-		switch field.name {
-		case "Vulkan_Options":
+		switch field.type.id {
+		case typeid_of(Vulkan_Options):
 			set_default_vulkan_options()
 		case:
 			// When it's not editor build I don't want to crash app just log the warning
-			when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] do log.panic("Unhandled setting of default options of field '%v'", field.name)
-			else do log.warnf("Unhandled setting of default options of field '%v'", field.name)
+			when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] do log.panic("No default options provided for '%v'", field.name)
+			else do log.warnf("No default options provided for field '%v'", field.name)
 		}
 	}
 }
@@ -345,6 +345,7 @@ set_default_vulkan_options :: proc "contextless" () {
 	features.bits = Vulkan_Option_Flags{}
 	presentation.option = .FIFO // Should be available on all devices that support Vulkan presentation
 	presentation.names = &Vulkan_Presentation_Option_Names
+	features.names = &Vulkan_Option_Flags_Names
 }
 
 @(private="file")
@@ -438,68 +439,70 @@ save_configuration :: proc() -> (success: bool) {
 	current_offset: i64
 	conf := get_engine_configuration()
 
-	save_handle_options(h, &current_offset, &conf.options)
-	// Handle settings
-	fields := reflect.struct_fields_zipped(type_of(conf.settings))
-
-	for f, i in fields {
-		field := f
-
-		tag := string(f.tag)
-		tag_b := transmute([]byte)tag
-
-		os.write_at(h, tag_b[:], current_offset)
-		current_offset += i64(len(tag_b))
-
-		os.write_at(h, CONFIG_FILE_SEPRATOR[:], current_offset)
-		current_offset += i64(len(CONFIG_FILE_SEPRATOR))
-
-		val_any := reflect.struct_field_value(conf.settings, f)
-
-		switch t in val_any {
-		case int:
-			int_buff: [64]byte
-			int_str := transmute([]byte) strconv.write_int(int_buff[:], i64(t), 10)
-			os.write_at(h, int_str[:], current_offset)
-			current_offset += i64(len(int_str))
-		case string:
-			s := transmute([]byte)t
-			os.write_at(h, s[:], current_offset)
-			current_offset += i64(len(s[:]))
-		case f32:
-			float_buff: [64]byte
-			float_str := transmute([]byte) strconv.write_float(float_buff[:], f64(t), 'G', -1, 32)
-			os.write_at(h, float_str[:], current_offset)
-			current_offset += i64(len(float_str))
-		case:
-			os.write_at(h, UNDEFINED_CONFIG_VALUE[:], current_offset)
-			current_offset += i64(len(UNDEFINED_CONFIG_VALUE))
-		}
-
-		os.write_at(h, CONFIG_FILE_NEW_LINE[:], current_offset)
-		current_offset += i64(len(CONFIG_FILE_NEW_LINE))
-	}
+	save_handle_options(h, &current_offset, conf.options)
+	save_handle_settings(h, &current_offset, conf.settings)
 
 	when CONFIG_VERBOSE_LOG do log.debugf("Saving of file '%v' successful", ENGINE_CONFIGURATION_FILE_NAME)
 	success = true
 	return
 }
 
+save_handle_settings :: proc(h: os.Handle, offset: ^i64, structure: any) {
+	for field in reflect.struct_fields_zipped(structure.id) {
+		config_tag := reflect.struct_tag_get(field.tag, CONFIG_TAG)
+
+		tag_b := transmute([]byte)config_tag
+
+		os.write_at(h, tag_b, offset^)
+		offset^ += i64(slice.size(tag_b))
+
+		os.write_at(h, CONFIG_FILE_SEPRATOR[:], offset^)
+		offset^ += i64(slice.size(CONFIG_FILE_SEPRATOR[:]))
+
+		field_any := reflect.struct_field_value(structure, field)
+
+		switch v in field_any {
+		case int:
+			int_buff: [64]byte
+			integer_string_b := transmute([]byte) strconv.write_int(int_buff[:], i64(v), 10)
+			os.write_at(h, integer_string_b, offset^)
+			offset^ += i64(slice.size(integer_string_b))
+		case string:
+			string_b := transmute([]byte)v
+			os.write_at(h, string_b, offset^)
+			offset^ += i64(slice.size(string_b))
+		case f32:
+			float_buff: [64]byte
+			float_string_b := transmute([]byte) strconv.write_float(float_buff[:], f64(v), 'G', -1, 32)
+			os.write_at(h, float_string_b, offset^)
+			offset^ += i64(slice.size(float_string_b))
+		case:
+			os.write_at(h, UNDEFINED_CONFIG_VALUE[:], offset^)
+			offset^ += i64(slice.size(UNDEFINED_CONFIG_VALUE[:]))
+		}
+
+		os.write_at(h, CONFIG_FILE_NEW_LINE[:], offset^)
+		offset^ += i64(slice.size(CONFIG_FILE_NEW_LINE[:]))
+	}
+}
+
 save_handle_options :: proc(h: os.Handle, offset: ^i64, structure: any) {
-	for field in reflect.struct_fields_zipped(type_of(structure)) {
+	for field in reflect.struct_fields_zipped(structure.id) {
+		info := unwrap_named_type(field.type)
 		field_value_any := reflect.struct_field_value(structure, field)
-		config_tag := reflect.struct_tag_get(field.tag, "config")
-		#partial switch v in field.type.variant {
+		config_tag := reflect.struct_tag_get(field.tag, CONFIG_TAG)
+		#partial switch &t in info.variant {
 		case runtime.Type_Info_Struct:
-			if intrinsics.type_is_specialization_of(type_of(field_value_any), Option) do save_handle_option(config_tag, h, offset, field_value_any)
-			else if intrinsics.type_is_specialization_of(type_of(field_value_any), Option_Flags) do save_handle_option_flags(h, offset, field_value_any)
+			struct_type := get_engine_configuration_structure_type(field_value_any)
+			if struct_type == .Option || struct_type == .Option_Feature do save_handle_option(config_tag, h, offset, field_value_any)
+			else if struct_type == .Option_Flags || struct_type == .Option_Feature_Flags do save_handle_option_flags(h, offset, field_value_any)
 			else do save_handle_options(h, offset, field_value_any)
 		case runtime.Type_Info_Bit_Set: 
 			when CONFIG_BUILD_TARGET != Build_Variants[.Release] && CONFIG_VERBOSE_LOG do log.warnf("Using plain bit_set in options is not recommended")
-			save_handle_bit_set(h, offset, field_value_any)
+			save_handle_bit_set(info, &t, h, offset, field_value_any)
 		case runtime.Type_Info_Enum: 
 			when CONFIG_BUILD_TARGET != Build_Variants[.Release] && CONFIG_VERBOSE_LOG do log.warnf("Using plain enum in options is not recommended")
-			save_handle_enum(config_tag, h, offset, field_value_any)
+			save_handle_enum(info, &t, config_tag, h, offset, field_value_any)
 		case:
 		}
 
@@ -507,6 +510,8 @@ save_handle_options :: proc(h: os.Handle, offset: ^i64, structure: any) {
 }
 
 save_handle_option :: proc(tag: string, h: os.Handle, offset: ^i64, structure: any) {
+	if tag == "" do return
+
 	option_any := reflect.struct_field_value_by_name(structure, "option", allow_using = true)
 	if option_any == nil {
 		log.errorf("Expected option field in '%v' structure while saving, but it was not found", structure)
@@ -561,7 +566,7 @@ save_handle_option_flags :: proc(h: os.Handle, offset: ^i64, structure: any) {
 	names_any := reflect.struct_field_value_by_name(structure, "names", allow_using = true)
 	names: []string
 
-	if names == nil || (cast(^[^]string)names_any.data)^ == nil do names = enum_info.names
+	if names_any == nil || (cast(^[^]string)names_any.data)^ == nil do names = enum_info.names
 	else do names = ((cast(^[^]string)names_any.data)^)[:len(enum_info.values)]
 
 	for v, i in enum_info.values {
@@ -586,10 +591,7 @@ save_handle_option_flags :: proc(h: os.Handle, offset: ^i64, structure: any) {
 	}
 }
 
-save_handle_bit_set :: proc(h: os.Handle, offset: ^i64, _bit_set: any) {
-	info := type_info_of(_bit_set.id)
-	bit_set_info := info.variant.(runtime.Type_Info_Bit_Set)
-
+save_handle_bit_set :: proc(info: ^runtime.Type_Info, bit_set_info: ^runtime.Type_Info_Bit_Set, h: os.Handle, offset: ^i64, _bit_set: any) {
 	base_enum_info, success := unwrap_enum_from_named(bit_set_info.elem)
 	if !success do return
 
@@ -616,10 +618,7 @@ save_handle_bit_set :: proc(h: os.Handle, offset: ^i64, _bit_set: any) {
 	}
 }
 
-save_handle_enum :: proc(tag: string, h: os.Handle, offset: ^i64, _enum: any) {
-	info := type_info_of(_enum.id)
-	enum_info := info.variant.(runtime.Type_Info_Enum)
-	
+save_handle_enum :: proc(info: ^runtime.Type_Info, enum_info: ^runtime.Type_Info_Enum, tag: string, h: os.Handle, offset: ^i64, _enum: any) {
 	tag_b := transmute([]byte)tag
 
 	os.write_at(h, tag_b, offset^)
@@ -712,21 +711,22 @@ load_configuration :: proc(settings_string_allocator: runtime.Allocator, temp_al
 	}
 	defer os.close(h)
 
-	m := parse_engine_configuration_file(h, temp_allocator)
+	m := parse_engine_configuration_file(h, temp_allocator, temp_allocator)
 	defer delete(m)
 
 	for k, v in m do load_value(k, v, settings_string_allocator)
+	
+	free_all(temp_allocator)
 
 	when CONFIG_VERBOSE_LOG do log.debugf("Loading of file '%v' successful", ENGINE_CONFIGURATION_FILE_NAME)
 }
 
-parse_engine_configuration_file :: proc(h: os.Handle, allocator := context.allocator) -> map[string]string {
+parse_engine_configuration_file :: proc(h: os.Handle, allocator := context.allocator, temp_allocator := context.temp_allocator) -> map[string]string {
 	/***************************************************
 		NOTE:
 		I don't really know at the moment how I want to handle some characters like: '\t' or '\r' etc.
 		So at the moment I will just treat them like normal chars and let default case handle them,
 		but I don't want it to stay that way, so this code needs a revisit later on.
-		Also truncating only to spaces is somewhat distrubing me, but it's okay for now.
 	***************************************************/
 
 	data_b, success := os.read_entire_file_from_handle(h)
@@ -734,7 +734,6 @@ parse_engine_configuration_file :: proc(h: os.Handle, allocator := context.alloc
 	defer delete(data_b)
 
 	data := string(data_b[:]) // convert to string to iterate as rune for utf8 encoding
-
 
 	// 128 characters should be more than enough
 	key_buff := make([dynamic]rune, 0, 128) 
@@ -746,7 +745,7 @@ parse_engine_configuration_file :: proc(h: os.Handle, allocator := context.alloc
 	values := make(map[string]string, allocator)
 	
 	reading_key := true // to know when we string that's being read is key or value
-	start_reading := false // used to ignore the spaces before actual key/value string (spaces after are truncated by strings.truncate_to_byte)
+	start_reading := false // used to ignore the spaces before actual key/value string (spaces after are trimed by strings.trim_right_space)
 	for char in data {
 		switch char {
 		case ' ':
@@ -766,13 +765,17 @@ parse_engine_configuration_file :: proc(h: os.Handle, allocator := context.alloc
 			val_raw := utf8.runes_to_string(val_buff[:], allocator)
 			defer delete(val_raw, allocator)
 
-			key := strings.truncate_to_byte(key_raw, ' ')
-			val := strings.truncate_to_byte(val_raw, ' ')
+			key := strings.trim_right_space(key_raw)
+			val := strings.trim_right_space(val_raw)
 
 			_, exists := values[key]
 			if !exists && key != "" {
-				if val != "" do values[key] = val
-				else do values[key] = string(UNDEFINED_CONFIG_VALUE[:])
+				cloned_key := strings.clone(key, temp_allocator)
+				if val != "" {
+					cloned_val := strings.clone(val, temp_allocator)
+					values[cloned_key] = cloned_val
+				}
+				else do values[cloned_key] = string(UNDEFINED_CONFIG_VALUE[:])
 			}
 			else do when CONFIG_VERBOSE_LOG do log.warnf("Duplicate configuration value detected: %v: %v", key, val)
 
@@ -791,20 +794,19 @@ parse_engine_configuration_file :: proc(h: os.Handle, allocator := context.alloc
 	}
 
 	key_raw := utf8.runes_to_string(key_buff[:], allocator)
-	defer delete(key_raw)
+	defer delete(key_raw, allocator)
 
 	val_raw := utf8.runes_to_string(val_buff[:], allocator)
-	defer delete(val_raw)
+	defer delete(val_raw, allocator)
 
-	key := strings.truncate_to_byte(key_raw, ' ')
-	val := strings.truncate_to_byte(val_raw, ' ')
+	key := strings.trim_right_space(key_raw)
+	val := strings.trim_right_space(val_raw)
 
 	_, exists := values[key]
 	if !exists && key != "" {
 		if val != "" do values[key] = val
 		else do values[key] = string(UNDEFINED_CONFIG_VALUE[:])
-	}
-	else do when CONFIG_VERBOSE_LOG do log.warnf("Duplicate configuration value detected: %v: %v", key, val)
+	} else if exists && key != "" do when CONFIG_VERBOSE_LOG do log.warnf("Duplicate configuration value detected: %v: %v", key, val)
 
 	return values
 }
@@ -817,10 +819,11 @@ load_value :: proc(key, value: string, settings_strings_allocator: runtime.Alloc
 }
 
 load_value_settings :: proc(key, value: string, structure: any, strings_allocator: runtime.Allocator) -> (loaded: bool) {
-	for field in reflect.struct_fields_zipped(type_of(structure)) {
+	for field in reflect.struct_fields_zipped(type_of(structure.id)) {
 		field_any := reflect.struct_field_value(structure, field)
-		config_tag := reflect.struct_tag_get(field.tag, "config")
-		#partial switch t in field.type.variant {
+		config_tag := reflect.struct_tag_get(field.tag, CONFIG_TAG)
+		info := unwrap_named_type(field.type)
+		#partial switch t in info.variant {
 		case runtime.Type_Info_Float:
 			if config_tag != key do continue
 
@@ -859,53 +862,36 @@ load_value_options :: proc(key, value: string, structure: any) {
 	// if option is false or undefined, leave as Odin's zero value
 	if value == OPTION_FLAG_FALSE_STRING || value == string(UNDEFINED_CONFIG_VALUE[:]) do return 
 
-	for field in reflect.struct_fields_zipped(type_of(structure)) {
-		config_tag := reflect.struct_tag_get(field.tag, "config") // we need conifg tag for certain types
+	for field in reflect.struct_fields_zipped(type_of(structure.id)) {
+		config_tag := reflect.struct_tag_get(field.tag, CONFIG_TAG) // we need conifg tag for certain types
 		field_any := reflect.struct_field_value(structure, field)
-		if field_any.data == nil do return // check if there is a field
 
-		#partial switch &t in field.type.variant {
-		case runtime.Type_Info_Named: load_handle_named(config_tag, key, value, field_any, &t)
+		info := unwrap_named_type(field.type)
+
+		#partial switch &t in info.variant {
 		case runtime.Type_Info_Struct:
-			if config_tag != "" && config_tag == key && intrinsics.type_is_specialization_of(type_of(field_any), Option) do load_handle_option_struct(value, field_any)
-			else if intrinsics.type_is_specialization_of(type_of(field_any), Option_Flags) do load_handle_option_flags_struct(key, field_any)
+			struct_type := get_engine_configuration_structure_type(field_any)
+			if config_tag != "" && config_tag == key && (struct_type == .Option || struct_type == .Option_Feature) do load_handle_option_struct(value, field_any)
+			else if struct_type == .Option_Flags || struct_type == .Option_Feature_Flags do load_handle_option_flags_struct(key, field_any)
 			else do load_value_options(key, value, field_any)
 		case runtime.Type_Info_Enum: 
-			if config_tag != "" && config_tag == key do load_handle_enum(value, field_any)
+			if config_tag != "" && config_tag == key do load_handle_enum(info, &t, value, field_any)
 			else do continue
-		case runtime.Type_Info_Bit_Set: load_handle_bit_set(key, field_any)
+		case runtime.Type_Info_Bit_Set: load_handle_bit_set(info, &t, key, field_any)
 		case: continue
 		}
 	}
 }
 
-
 @(private="file")
-load_handle_named :: proc(tag, key, value: string, field: any, named: ^runtime.Type_Info_Named) {
-	#partial switch t in named.base.variant {
-	case runtime.Type_Info_Enum: if tag != "" && tag == key do load_handle_enum(value, field)
-	case runtime.Type_Info_Bit_Set: load_handle_bit_set(key, field)
-	case runtime.Type_Info_Struct: load_value_options(key, value, field)
-	case runtime.Type_Info_Named: load_handle_named(tag, key, value, field, named)
-	case: return
-	}
-}
-
-@(private="file")
-load_handle_enum :: proc(value: string, field: any) {
-	info := type_info_of(type_of(field))
-	enum_info := info.variant.(runtime.Type_Info_Enum)
-
+load_handle_enum :: proc(info: ^runtime.Type_Info, enum_info: ^runtime.Type_Info_Enum, value: string, field: any) {
 	for n, i in enum_info.names {
 		if n == value do set_enum_value_by_rawptr(field.data, info.size, enum_info.values[i])
 	}
 }
 
 @(private="file")
-load_handle_bit_set :: proc(key: string, field: any) {
-	info := type_info_of(type_of(field))
-	bit_set_info := info.variant.(runtime.Type_Info_Bit_Set)
-
+load_handle_bit_set :: proc(info: ^runtime.Type_Info, bit_set_info: ^runtime.Type_Info_Bit_Set, key: string, field: any) {
 	base_enum_info, success := unwrap_enum_from_named(bit_set_info.elem)
 	if !success do return
 	
@@ -991,6 +977,79 @@ set_bit_set_value_by_rawptr :: proc(data: rawptr, lowest: i64, size: int, value:
 	UTILITY:
 */
 
+Engine_Structure_Kinds :: enum {
+	Not_Struct,
+	Other,
+	Option,
+	Option_Feature,
+	Option_Flags,
+	Option_Feature_Flags
+}
+
+get_engine_configuration_structure_type :: proc(structure: any) -> Engine_Structure_Kinds  {
+	info := type_info_of(structure.id)
+	unwrapped := unwrap_named_type(info)
+	struct_info, ok := unwrapped.variant.(runtime.Type_Info_Struct)
+	if !ok do return .Not_Struct
+	
+	if struct_info.field_count != 2 && struct_info.field_count != 3 do return .Other
+	
+	option := reflect.struct_field_value_by_name(structure, "option", allow_using = true)
+	bits := reflect.struct_field_value_by_name(structure, "bits", allow_using = true)
+	names_any := reflect.struct_field_value_by_name(structure, "names", allow_using = true)
+	available := reflect.struct_field_value_by_name(structure, "available", allow_using = true)
+
+	// Names field needs to exist and either option or bits
+	if names_any == nil do return .Other
+	if option == nil && bits == nil do return .Other
+
+	base_names_info := type_info_of(names_any.id)
+	base_names_info = unwrap_named_type(base_names_info)
+
+	pointer_info, is_pointer := base_names_info.variant.(runtime.Type_Info_Pointer)
+	if !is_pointer do return .Other
+
+	enumerated_info, is_enumerated := pointer_info.elem.variant.(runtime.Type_Info_Enumerated_Array)
+	if !is_enumerated do return .Other
+
+	unwrapped_index := unwrap_named_type(enumerated_info.index)
+
+	index_info, index_is_enum := unwrapped_index.variant.(runtime.Type_Info_Enum)
+	if !index_is_enum do return .Other
+
+	if option == nil {
+		base_info := type_info_of(bits.id)
+		base_info = unwrap_named_type(base_info)
+
+		bits_info, is_bits := base_info.variant.(runtime.Type_Info_Bit_Set)
+		if !is_bits do return .Other
+
+		unwrapped_enum_info := unwrap_named_type(bits_info.elem)
+
+		enum_info, is_enum := unwrapped_enum_info.variant.(runtime.Type_Info_Enum)
+		if !is_enum do return .Other
+
+		if unwrapped_enum_info.id != unwrapped_index.id do return .Other
+
+		if available == nil do return .Option_Flags
+		else do return .Option_Feature_Flags
+	} else {
+		base_info := type_info_of(option.id)
+		base_info = unwrap_named_type(base_info)
+
+		enum_info, is_enum := base_info.variant.(runtime.Type_Info_Enum)
+		if !is_enum do return .Other
+
+		if base_info.id != unwrapped_index.id do return .Other
+
+		if available == nil do return .Option
+		else do return .Option_Feature
+	}
+
+	return .Other
+}
+
+
 
 get_enum_based_on_string :: proc "contextless" (value: string, enumerated_array: [$T]string) -> T where intrinsics.type_is_enum(T) {
 	for s, e in enumerated_array {
@@ -999,13 +1058,23 @@ get_enum_based_on_string :: proc "contextless" (value: string, enumerated_array:
 	return nil
 }
 
-unwrap_enum_from_named :: proc(info: ^runtime.Type_Info) -> (enum_info: runtime.Type_Info, success: bool) {
-	enum_info = info^
+unwrap_enum_from_named :: proc(info: ^runtime.Type_Info) -> (enum_info: ^runtime.Type_Info, success: bool) {
+	enum_info = info
 	for {
-		#partial switch t in info.variant {
-		case runtime.Type_Info_Enum: return
-		case runtime.Type_Info_Named: enum_info = t.base^
+		#partial switch t in enum_info.variant {
+		case runtime.Type_Info_Enum: return enum_info, true
+		case runtime.Type_Info_Named: enum_info = t.base
 		case: return {}, false
+		}
+	}
+}
+
+unwrap_named_type :: proc(info: ^runtime.Type_Info) -> (base_info: ^runtime.Type_Info) {
+	base_info = info
+	for {
+		#partial switch t in base_info.variant {
+		case runtime.Type_Info_Named: base_info = t.base
+		case: return
 		}
 	}
 }
