@@ -1,7 +1,8 @@
 #+feature using-stmt
-package render
+package engine
 
 import "base:runtime"
+
 import os "core:os/old"
 import "core:log"
 import "core:slice"
@@ -201,7 +202,7 @@ load_asset_editor :: proc(filename: string, pkg: string = "", allocator := conte
 		log.error("Asset pack cannot be loaded with this procedure")
 		return
 	}
-	when VERBOSE_LOG do log.debugf("Asset extension of file '%v' detected as: %v", filename, asset.extension)
+	when CONFIG_VERBOSE_LOG do log.debugf("Asset extension of file '%v' detected as: %v", name, asset.extension)
 
 	if asset.type == nil {
 		log.errorf("Cannot determine asset type that file '%v' contains", filename)
@@ -210,7 +211,7 @@ load_asset_editor :: proc(filename: string, pkg: string = "", allocator := conte
 		log.error("Asset pack cannot be loaded with this procedure")
 		return
 	}
-	when VERBOSE_LOG do log.debugf("Asset type from file '%v' detected as: %v", filename, asset.type)
+	when CONFIG_VERBOSE_LOG do log.debugf("Asset type from file '%v' detected as: %v", name, asset.type)
 
 	// Memory loading from file will be pretty much the same for every type
 	byte_mem, read_err := os.read_entire_file_or_err(file_handle, binary_data_allocator)
@@ -435,7 +436,6 @@ get_asset_type_from_filename_extension :: proc(name: string, temp_allocator := c
 
 	return
 }
-
 
 build_asset_pack :: proc(assets: ^map[xxhash.xxh_u64]Asset_Runtime) {
 	handle, err := os.open(ASSET_PACK_NAME, os.O_TRUNC | os.O_CREATE | os.O_WRONLY, 0o644)

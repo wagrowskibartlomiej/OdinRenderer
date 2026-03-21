@@ -28,8 +28,7 @@ echo "Building Odin shared library"
 cd "$ROOT_DIR"
 
 odin build . \
-  -define:DESKTOP_BUILD=false \
-  -define:VERBOSE_LOG=false \
+  -define:BUILD_TARGET=MOBILE \
   -o:aggressive \
   -target:linux_arm64 \
   -subtarget:android \

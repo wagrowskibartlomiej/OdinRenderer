@@ -5,3 +5,4 @@ OdinRenderer
 *.pack
 .gdb_history
 gdb.txt
+*.engine

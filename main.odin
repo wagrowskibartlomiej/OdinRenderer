@@ -1,4 +1,4 @@
-package render
+package engine
 
 import os "core:os/old"
 import "core:fmt"
@@ -14,9 +14,9 @@ Global_State :: struct {
 }
 
 
-when DESKTOP_BUILD do main :: proc () {
+when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do main :: proc () {
 	global_app_state: Global_State
-	when TRACKING_ALLOCATOR {
+	when CONFIG_TRACKING_ALLOCATOR {
 		alloc: mem.Tracking_Allocator
 		mem.tracking_allocator_init(&alloc, context.allocator)
 		context.allocator = mem.tracking_allocator(&alloc)
@@ -31,19 +31,23 @@ when DESKTOP_BUILD do main :: proc () {
 		}
 	}
 
+
 	opts := log.Options{.Level,.Terminal_Color,.Thread_Id}
-	when ODIN_DEBUG || VERBOSE_LOG {
-		opts |= {.Short_File_Path, .Line}
-		ident := ""
-	} else {
-		opts |= {.Date, .Time}
-		ident := "RENDERER"
-	}
+	ident := "ENGINE"
+
+	when ODIN_DEBUG || CONFIG_VERBOSE_LOG do opts |= {.Short_File_Path, .Line}
+	else when CONFIG_BUILD_VARIANT == Build_Variants[.Headless] do opts |= {.Line, .Date, .Time}
+	else do opts |= {.Date, .Time}
 
 	context.logger = log.create_console_logger(opt = opts, ident = ident)
 	defer log.destroy_console_logger(context.logger)
 
 	context.user_ptr = &global_app_state
+	initialize_engine_configuration()
+	defer cleanup_engine_configuration()
+
+	load_configuration(get_engine_configuration()._settings_strings_arena.allocator)
+	defer save_configuration()
 
 	when EDITOR_BUILD {
 		success: bool
