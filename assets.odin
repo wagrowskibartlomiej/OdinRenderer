@@ -14,8 +14,6 @@ ASSET_PACK_HEADER : string : "ODINRENDERERASSETPACK"
 ASSET_PACK_VERSION : u64 : 1
 
 PKG_BACKUP_NAME :: "PKGUNRESLOVED"
-//TODO:  I need to make something like header files for this, just gonna use #type keyword and the the API should be alright
-
 // TODO: Optimally building proccess should generate enum values of packages and use that instead of strings
 Asset_Runtime :: struct {
 	type: Asset_Type,
