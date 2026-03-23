@@ -518,6 +518,7 @@ get_asset_descriptor_file_byte_size :: proc(a: ^Asset_Runtime) -> (size: i64) {
 	size += size_of(a.extension)
 	size += size_of(Asset_Descriptor{}.pkg_len)
 	size += (i64(len(a.pkg)) * size_of(byte))
+	size += size_of(Asset_Descriptor{}.name_len)
 	size += (i64(len(a.name)) * size_of(byte)) 
 	size += size_of(Asset_Descriptor{}.length)
 	size += size_of(Asset_Descriptor{}.offset)
