@@ -109,17 +109,17 @@ cleanup_renderer_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Alloca
 	when CONFIG_VERBOSE_LOG do log.debug("Render passes resource flag unset")
 }
 
-create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, assets_state: ^Assets_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
 	if .Pipelines in state.resource_flags do log.warn("Called pipelines creation when resource flag is set, possible error")
 
-	v, vertex_present := get_asset_memory(ass_state, .Shader, "default_vertex.spv", "spirv")
+	v, vertex_present := get_asset_memory(assets_state, .Shader, "default_vertex.spv", "spirv")
 	if !vertex_present {
 		log.error("Cannot create graphics pipelines: Missing vertex shader memory in assets pool")
 		return
 	}
 
 
-	f, fragment_present := get_asset_memory(ass_state, .Shader, "default_fragment.spv", "spirv")
+	f, fragment_present := get_asset_memory(assets_state, .Shader, "default_fragment.spv", "spirv")
 	if !fragment_present {
 		log.error("Cannot create graphics pipelines: Missing fragment shader memory in assets pool")
 		return
@@ -174,8 +174,11 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_
 	}
 
 	attribute_desc := vk.VertexInputAttributeDescription{
+		format = .R32G32_SFLOAT,
 	}
 	binding_desc := vk.VertexInputBindingDescription{
+		inputRate = .VERTEX,
+		stride = 8
 	}
 
 	vertex_input := vk.PipelineVertexInputStateCreateInfo{
@@ -190,10 +193,6 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_
 		sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
 		topology = .TRIANGLE_STRIP,
 		primitiveRestartEnable = false,
-	}
-
-	tessellation := vk.PipelineTessellationStateCreateInfo{
-		sType = .PIPELINE_TESSELLATION_STATE_CREATE_INFO,
 	}
 
 	viewport := vk.Viewport{
@@ -216,7 +215,7 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_
 		
 	rasterization := vk.PipelineRasterizationStateCreateInfo{
 		sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-		rasterizerDiscardEnable = true,
+		rasterizerDiscardEnable = false,
 		cullMode = {},
 		polygonMode = .FILL,
 		lineWidth = 1,
@@ -245,8 +244,16 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_
 		depthTestEnable = false,
 	}
 
+	blend_attachment := vk.PipelineColorBlendAttachmentState{
+		colorWriteMask = {.R, .G, .B, .A},
+		blendEnable = false,
+	}
+
 	blend := vk.PipelineColorBlendStateCreateInfo{
 		sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+		logicOpEnable = false,
+		pAttachments = &blend_attachment,
+		attachmentCount = 1,
 	}
 	
 
@@ -256,7 +263,6 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, ass_state: ^Assets_
 		stageCount = u32(len(stages)),
 		pVertexInputState = &vertex_input,
 		pInputAssemblyState = &input_assembly,
-		pTessellationState = &tessellation,
 		pViewportState = &viewport_state, 
 		pRasterizationState = &rasterization,
 		pMultisampleState = &multisample,
@@ -288,16 +294,16 @@ cleanup_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := conte
 		return
 	}
 
-	vk.DestroyPipeline(state.device.handle, state.pipelines.traingle.handle, callbacks)
+	vk.DestroyPipeline(state.device.handle, state.pipelines.triangle.handle, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Graphics pipelines destroyed")
 
-	vk.DestroyPipelineLayout(state.device.handle, state.pipelines.traingle.layout, callbacks)
+	vk.DestroyPipelineLayout(state.device.handle, state.pipelines.triangle.layout, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Pipeline layout destroyed")
 
-	vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.vertex_module, callbacks)
+	vk.DestroyShaderModule(state.device.handle, state.pipelines.triangle.vertex_module, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Vertex shader module destroyed")
 
-	vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.fragment_module, callbacks)
+	vk.DestroyShaderModule(state.device.handle, state.pipelines.triangle.fragment_module, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Fragment shader module destroyed")
 
 	state.resource_flags &~= {.Pipelines}

@@ -819,7 +819,7 @@ load_value :: proc(key, value: string, settings_strings_allocator: runtime.Alloc
 }
 
 load_value_settings :: proc(key, value: string, structure: any, strings_allocator: runtime.Allocator) -> (loaded: bool) {
-	for field in reflect.struct_fields_zipped(type_of(structure.id)) {
+	for field in reflect.struct_fields_zipped(structure.id) {
 		field_any := reflect.struct_field_value(structure, field)
 		config_tag := reflect.struct_tag_get(field.tag, CONFIG_TAG)
 		info := unwrap_named_type(field.type)
@@ -862,7 +862,7 @@ load_value_options :: proc(key, value: string, structure: any) {
 	// if option is false or undefined, leave as Odin's zero value
 	if value == OPTION_FLAG_FALSE_STRING || value == string(UNDEFINED_CONFIG_VALUE[:]) do return 
 
-	for field in reflect.struct_fields_zipped(type_of(structure.id)) {
+	for field in reflect.struct_fields_zipped(structure.id) {
 		config_tag := reflect.struct_tag_get(field.tag, CONFIG_TAG) // we need conifg tag for certain types
 		field_any := reflect.struct_field_value(structure, field)
 

@@ -1,5 +1,8 @@
 package engine
 
+import "base:intrinsics"
+import "core:log"
+
 // Extracts variant part of version from Vulkan encoded version number.
 decode_vk_version_variant :: proc "contextless" (version: u32) -> u32 {
 	return version >> 29
@@ -24,4 +27,14 @@ decode_vk_version :: proc "contextless" (version: u32) -> [4]u32 {
 		decode_vk_version_patch(version),
 		decode_vk_version_variant(version),
 	}
+}
+
+set_resource_flag :: #force_inline proc(flags: ^bit_set[$T], flag: T) where intrinsics.type_is_enum(T) {
+	flags^ |= bit_set[T]{flag}
+	when CONFIG_VERBOSE_LOG do log.debugf("Resource flag %v set", flag)
+}
+
+unset_resource_flag :: #force_inline proc(flags: ^bit_set[$T], flag: T) where intrinsics.type_is_enum(T) {
+	flags^ |= bit_set[T]{flag}
+	when CONFIG_VERBOSE_LOG do log.debugf("Resource flag %v unset", flag)
 }

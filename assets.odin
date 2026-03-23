@@ -143,7 +143,7 @@ initalize_assets :: proc(allocator := context.allocator, binary_data_allocator :
 	state.allocator = allocator
 	state.binary_data_allocator = binary_data_allocator
 
-	when EDITOR_BUILD {
+	when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] {
 		state.items = make(map[xxhash.xxh_u64]Asset_Runtime, allocator)
 		defer if !success do delete(state.items)
 
@@ -161,7 +161,7 @@ initalize_assets :: proc(allocator := context.allocator, binary_data_allocator :
 
 	}
 
-	when VERBOSE_LOG do log.debug("Assets state initialization successful")
+	when CONFIG_VERBOSE_LOG do log.debug("Assets state initialization successful")
 
 	success = true
 	return
@@ -169,9 +169,9 @@ initalize_assets :: proc(allocator := context.allocator, binary_data_allocator :
 
 
 cleanup_assets :: proc(state: ^Assets_State) -> (success: bool) {
-	when EDITOR_BUILD do cleanup_assets_editor(state)
+	when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] do cleanup_assets_editor(state)
 
-	when VERBOSE_LOG do log.debug("Assets state cleanup successful")
+	when CONFIG_VERBOSE_LOG do log.debug("Assets state cleanup successful")
 	success = true
 	return
 }
@@ -202,7 +202,7 @@ load_asset_editor :: proc(filename: string, pkg: string = "", allocator := conte
 		log.error("Asset pack cannot be loaded with this procedure")
 		return
 	}
-	when CONFIG_VERBOSE_LOG do log.debugf("Asset extension of file '%v' detected as: %v", name, asset.extension)
+	when CONFIG_VERBOSE_LOG do log.debugf("Asset extension of file '%v' detected as: %v", filename, asset.extension)
 
 	if asset.type == nil {
 		log.errorf("Cannot determine asset type that file '%v' contains", filename)
@@ -211,7 +211,7 @@ load_asset_editor :: proc(filename: string, pkg: string = "", allocator := conte
 		log.error("Asset pack cannot be loaded with this procedure")
 		return
 	}
-	when CONFIG_VERBOSE_LOG do log.debugf("Asset type from file '%v' detected as: %v", name, asset.type)
+	when CONFIG_VERBOSE_LOG do log.debugf("Asset type from file '%v' detected as: %v", filename, asset.type)
 
 	// Memory loading from file will be pretty much the same for every type
 	byte_mem, read_err := os.read_entire_file_or_err(file_handle, binary_data_allocator)
@@ -227,16 +227,16 @@ load_asset_editor :: proc(filename: string, pkg: string = "", allocator := conte
 			return
 		case .Shader:
 			asset.memory = slice.reinterpret([]u32, byte_mem)
-			when VERBOSE_LOG do log.debugf("Loaded shader data from file '%v'", filename)
+			when CONFIG_VERBOSE_LOG do log.debugf("Loaded shader data from file '%v'", filename)
 		case .Mesh: 
 			asset.memory = byte_mem
-			when VERBOSE_LOG do log.debugf("Loaded mesh data from file '%v'", filename)
+			when CONFIG_VERBOSE_LOG do log.debugf("Loaded mesh data from file '%v'", filename)
 		case .Texture:
 			asset.memory = byte_mem
-			when VERBOSE_LOG do log.debugf("Loaded texture data from file '%v'", filename)
+			when CONFIG_VERBOSE_LOG do log.debugf("Loaded texture data from file '%v'", filename)
 		case .Primitive_Triangle:
 			asset.memory = byte_mem
-			when VERBOSE_LOG do log.debugf("Loaded primitve data from file '%v'", filename)
+			when CONFIG_VERBOSE_LOG do log.debugf("Loaded primitve data from file '%v'", filename)
 	}
 
 	// Just in case I'll add other functionality I'll leave the check here
@@ -283,7 +283,7 @@ load_asset_to_map_editor :: proc(filename: string, state: ^Assets_State, pkg: st
 		return
 	} else {
 		state.items[h] = asset
-		when VERBOSE_LOG do log.debugf("Loaded asset from filename '%v' and added it to assets map", filename)
+		when CONFIG_VERBOSE_LOG do log.debugf("Loaded asset from filename '%v' and added it to assets map", filename)
 	}
 
 	success = true
@@ -357,7 +357,7 @@ load_assets_from_dir :: proc(dir: string, state: ^Assets_State, temp_allocator :
 	defer delete(file_infos, temp_allocator)
 
 	if len(file_infos) <= 0 {
-		when VERBOSE_LOG do log.debugf("Empty directory detected '%v'", dir)
+		when CONFIG_VERBOSE_LOG do log.debugf("Empty directory detected '%v'", dir)
 		return
 	}
 
@@ -385,7 +385,7 @@ load_assets_from_dir :: proc(dir: string, state: ^Assets_State, temp_allocator :
 		}
 	}
 
-	when VERBOSE_LOG do log.debugf("Directory %v loaded successfuly", dir)
+	when CONFIG_VERBOSE_LOG do log.debugf("Directory %v loaded successfuly", dir)
 	return true
 }
 
@@ -749,14 +749,10 @@ load_assets_map :: proc(handle: Asset_Pack_Handle, allocator := context.allocato
 			name = string(a._name_backing[:]),
 			memory = Asset_Memory_File_Entry{a.offset, a.length}
 		}
-
-		item, e := m[cast(xxhash.xxh_u64)a.hash]
-		log.warnf("Item: (exists %v) %v",e, item )
-
 		success = true
 	}
 
-	when VERBOSE_LOG do log.debug("Assets map loaded")
+	when CONFIG_VERBOSE_LOG do log.debug("Assets map loaded")
 	success = true
 	return
 }
