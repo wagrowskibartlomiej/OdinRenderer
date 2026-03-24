@@ -2,4 +2,7 @@ OdinRenderer
 *.exe
 *.apk
 *.spv
+*.pack
+.gdb_history
+gdb.txt
 *.engine

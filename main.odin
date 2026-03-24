@@ -1,53 +1,65 @@
 package engine
 
+import os "core:os/old"
 import "core:fmt"
 import "core:log"
 import "core:mem"
 import "base:runtime"
 
 
+
 when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do main :: proc () {
-	when CONFIG_TRACKING_ALLOCATOR {
-		alloc: mem.Tracking_Allocator
-		mem.tracking_allocator_init(&alloc, context.allocator)
-		context.allocator = mem.tracking_allocator(&alloc)
+	state: Engine_Global_State
 
-		defer {
-			if len(alloc.allocation_map) > 0 {
-				fmt.eprintf("=== %v allocations not freed: ===\n", len(alloc.allocation_map))
-				for _, entry in alloc.allocation_map do fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
-			}
-
-			mem.tracking_allocator_destroy(&alloc)
-		}
-	}
-
-
-	opts := log.Options{.Level,.Terminal_Color,.Thread_Id}
-	ident := "ENGINE"
-
-	when ODIN_DEBUG || CONFIG_VERBOSE_LOG do opts |= {.Short_File_Path, .Line}
-	else when CONFIG_BUILD_VARIANT == Build_Variants[.Headless] do opts |= {.Line, .Date, .Time}
-	else do opts |= {.Date, .Time}
-
-	context.logger = log.create_console_logger(opt = opts, ident = ident)
-	defer log.destroy_console_logger(context.logger)
+	setup_engine_state(&state)
+	context = state.app_context.ctx
+	defer cleanup_engine_state(&state)
 
 	initialize_engine_configuration()
 	defer cleanup_engine_configuration()
 
 	load_configuration(get_engine_configuration()._settings_strings_arena.allocator)
-	defer save_configuration()
+	//defer save_configuration()
 
-	window_state := create_window(nil)
-	defer cleanup_window(&window_state)
+	when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] {
+		success: bool
 
-	state := initialize_vulkan(&window_state)
-	if !check_all_flags(state.init.resource_flags) {
+		state.assets, success = initalize_assets()
+		if !success do panic("Cannot initalize assets")
+
+		defer {
+			build_asset_pack(&state.assets.items)
+			success = cleanup_assets(&state.assets)
+			if !success do panic("Cannot cleanup assets")
+		}
+	} else {
+		state.assets.allocator = context.allocator
+		state.assets.binary_data_allocator = context.allocator
+
+		h, err := os.open("assets.pack")
+		if err != nil {
+			log.fatalf("Assets pack is missing.")
+			return
+		}
+		defer os.close(h)
+		state.assets.asset_pack_handle = h
+
+		loaded: bool
+		state.assets.items, state.assets.pkgs, loaded = load_assets_immediate(state.assets.asset_pack_handle, context.allocator)
+		if !loaded do return
+		defer cleanup_assets_map(&state.assets)
+	}
+
+	state.window = create_window(nil)
+	defer cleanup_window(&state.window)
+
+	state.renderer = initialize_vulkan(&state.window, &state.assets, &state.app_context)
+	if !check_all_flags(state.renderer.init.resource_flags) {
 		log.fatal("Initalization not completed successfuly")
-		cleanup_vulkan(&state)
+		cleanup_vulkan(&state.renderer)
 		return
 	}
 
-	defer cleanup_vulkan(&state)
+	defer cleanup_vulkan(&state.renderer)
 }
+

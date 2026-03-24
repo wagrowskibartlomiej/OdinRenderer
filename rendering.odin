@@ -10,7 +10,7 @@ Render_Passes_State :: struct {
 }
 
 Pipelines_State :: struct {
-	traingle: Pipeline_State,
+	triangle: Pipeline_State,
 }
 
 Pipeline_State :: struct {
@@ -19,8 +19,10 @@ Pipeline_State :: struct {
 	cache: vk.PipelineCache,
 	vertex_module,
 	fragment_module: vk.ShaderModule,
-	vertex_shader,
-	fragment_shader: Asset,
+}
+
+Commands_State :: struct {
+	command_pools: []vk.CommandPool,
 }
 
 
@@ -32,6 +34,7 @@ Frame_Resources_Flags :: bit_set[Frame_Resource_Flag]
 
 Frame_State :: struct {
 	sync: []Frame_Sync,
+	command: Commands_State,
 	resources_flags: Frame_Resources_Flags,
 }
 
@@ -42,7 +45,7 @@ Frame_Sync :: struct {
 }
 
 create_render_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
-	if .Render_Passes in state.resource_flags do log.warn("Called render pass creation while resource flag is set, possible error")
+	if .Render_Passes in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Init_Resource_Flag.Render_Passes)
 
 	color_ref := vk.AttachmentReference{
 		attachment = 0,
@@ -66,7 +69,10 @@ create_render_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Allocatio
 
 	dependency := vk.SubpassDependency{
 		srcSubpass = vk.SUBPASS_EXTERNAL,
-		srcAccessMask = {.COLOR_ATTACHMENT_WRITE},
+		dstSubpass = 0,
+		srcStageMask = {.FRAGMENT_SHADER},
+		dstStageMask = {.COLOR_ATTACHMENT_OUTPUT},
+		dstAccessMask = {.COLOR_ATTACHMENT_WRITE}
 	}
 	render_pass_create_info := vk.RenderPassCreateInfo{
 		sType = .RENDER_PASS_CREATE_INFO,
@@ -86,8 +92,7 @@ create_render_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Allocatio
 	}
 	when CONFIG_VERBOSE_LOG do log.debug("Render passes created")
 
-	state.resource_flags |= {.Render_Passes}
-	when CONFIG_VERBOSE_LOG do log.debug("Render passes resource flag set")
+	set_resource_flag(&state.resource_flags, Vulkan_Init_Resource_Flag.Render_Passes)
 
 	success = true
 	return
@@ -95,67 +100,71 @@ create_render_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Allocatio
 
 cleanup_renderer_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallbacks = nil) {
 	if .Render_Passes not_in state.resource_flags {
-		log.warn("Called render passes cleanup when resource flag is unset")
+		log_called_when_resource_unset(#procedure, Vulkan_Init_Resource_Flag.Render_Passes)
 		return
 	}
 
 	vk.DestroyRenderPass(state.device.handle, state.render_passes.main_render_pass, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Render passes destroyed")
 
-	state.resource_flags &~= {.Render_Passes}
-	when CONFIG_VERBOSE_LOG do log.debug("Render passes resource flag unset")
+	unset_resource_flag(&state.resource_flags, Vulkan_Init_Resource_Flag.Render_Passes)
 }
 
-create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
-	if .Pipelines in state.resource_flags do log.warn("Called pipelines creation when resource flag is set, possible error")
+create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, assets_state: ^Assets_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+	if .Pipelines in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Init_Resource_Flag.Pipelines)
 
-	state.pipelines.traingle.vertex_shader, success = load_from_asset_dir("default_vertex.spv", allocator, temp_allocator)
-	if !success {
-		log.errorf("Cannot read deafult vertex shader")
+	v, vertex_present := get_asset_memory(assets_state, .Shader, "default_vertex.spv", "spirv")
+	if !vertex_present {
+		log.error("Cannot create graphics pipelines: Missing vertex shader memory in assets pool")
 		return
 	}
 
-	state.pipelines.traingle.fragment_shader, success = load_from_asset_dir("default_fragment.spv", allocator, temp_allocator)
-	if !success {
-		log.errorf("Cannot read deafult vertex shader")
+
+	f, fragment_present := get_asset_memory(assets_state, .Shader, "default_fragment.spv", "spirv")
+	if !fragment_present {
+		log.error("Cannot create graphics pipelines: Missing fragment shader memory in assets pool")
 		return
 	}
+
+	vertex, _ := v.([]u32)
+	fragment, _ := f.([]u32)
 
 	vertex_shader_create_info := vk.ShaderModuleCreateInfo{
 		sType = .SHADER_MODULE_CREATE_INFO,
-		pCode = raw_data(state.pipelines.traingle.vertex_shader.memory.([]u32)),
-		codeSize = slice.size(state.pipelines.traingle.vertex_shader.memory.([]u32)),
+		pCode = raw_data(vertex),
+		codeSize = slice.size(vertex),
 	}
-	result := vk.CreateShaderModule(state.device.handle, &vertex_shader_create_info, callbacks, &state.pipelines.traingle.vertex_module)
+
+	result := vk.CreateShaderModule(state.device.handle, &vertex_shader_create_info, callbacks, &state.pipelines.triangle.vertex_module)
 	if result != .SUCCESS {
 		log.errorf("Vertex shader module creation fail: %v", result)
 		return
 	}
-	defer if !success do vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.vertex_module, callbacks)
+	defer if !success do vk.DestroyShaderModule(state.device.handle, state.pipelines.triangle.vertex_module, callbacks)
 
 	fragment_shader_create_info := vk.ShaderModuleCreateInfo{
 		sType = .SHADER_MODULE_CREATE_INFO,
-		pCode = raw_data(state.pipelines.traingle.fragment_shader.memory.([]u32)),
-		codeSize = slice.size(state.pipelines.traingle.fragment_shader.memory.([]u32)),
+		pCode = raw_data(fragment),
+		codeSize = slice.size(fragment),
 	}
 
-	result = vk.CreateShaderModule(state.device.handle, &fragment_shader_create_info, callbacks, &state.pipelines.traingle.fragment_module)
+	result = vk.CreateShaderModule(state.device.handle, &fragment_shader_create_info, callbacks, &state.pipelines.triangle.fragment_module)
 	if result != .SUCCESS {
 		log.errorf("Fragment shader module creation fail: %v", result)
 		return
 	}
-	defer if !success do vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.fragment_module, callbacks)
+	defer if !success do vk.DestroyShaderModule(state.device.handle, state.pipelines.triangle.fragment_module, callbacks)
 
 	vertex_stage_create_info := vk.PipelineShaderStageCreateInfo{
 		sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-		module = state.pipelines.traingle.vertex_module,
+		module = state.pipelines.triangle.vertex_module,
 		pName = "main",
 		stage = {.VERTEX},
 	}
 
 	fragment_stage_create_info := vk.PipelineShaderStageCreateInfo{
 		sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-		module = state.pipelines.traingle.fragment_module,
+		module = state.pipelines.triangle.fragment_module,
 		pName = "main",
 		stage = {.FRAGMENT},
 	}
@@ -166,8 +175,11 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := contex
 	}
 
 	attribute_desc := vk.VertexInputAttributeDescription{
+		format = .R32G32_SFLOAT,
 	}
 	binding_desc := vk.VertexInputBindingDescription{
+		inputRate = .VERTEX,
+		stride = 8
 	}
 
 	vertex_input := vk.PipelineVertexInputStateCreateInfo{
@@ -182,10 +194,6 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := contex
 		sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
 		topology = .TRIANGLE_STRIP,
 		primitiveRestartEnable = false,
-	}
-
-	tessellation := vk.PipelineTessellationStateCreateInfo{
-		sType = .PIPELINE_TESSELLATION_STATE_CREATE_INFO,
 	}
 
 	viewport := vk.Viewport{
@@ -208,7 +216,7 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := contex
 		
 	rasterization := vk.PipelineRasterizationStateCreateInfo{
 		sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-		rasterizerDiscardEnable = true,
+		rasterizerDiscardEnable = false,
 		cullMode = {},
 		polygonMode = .FILL,
 		lineWidth = 1,
@@ -225,20 +233,28 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := contex
 		sType = .PIPELINE_LAYOUT_CREATE_INFO,
 	}
 
-	result = vk.CreatePipelineLayout(state.device.handle, &layout_info, callbacks, &state.pipelines.traingle.layout)
+	result = vk.CreatePipelineLayout(state.device.handle, &layout_info, callbacks, &state.pipelines.triangle.layout)
 	if result != .SUCCESS {
 		log.errorf("Pipeline layout creation fail: %v", result)
 		return
 	}
-	defer if !success do vk.DestroyPipelineLayout(state.device.handle, state.pipelines.traingle.layout, callbacks)
+	defer if !success do vk.DestroyPipelineLayout(state.device.handle, state.pipelines.triangle.layout, callbacks)
 
 	depth := vk.PipelineDepthStencilStateCreateInfo{
 		sType = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 		depthTestEnable = false,
 	}
 
+	blend_attachment := vk.PipelineColorBlendAttachmentState{
+		colorWriteMask = {.R, .G, .B, .A},
+		blendEnable = false,
+	}
+
 	blend := vk.PipelineColorBlendStateCreateInfo{
 		sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+		logicOpEnable = false,
+		pAttachments = &blend_attachment,
+		attachmentCount = 1,
 	}
 	
 
@@ -248,7 +264,6 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := contex
 		stageCount = u32(len(stages)),
 		pVertexInputState = &vertex_input,
 		pInputAssemblyState = &input_assembly,
-		pTessellationState = &tessellation,
 		pViewportState = &viewport_state, 
 		pRasterizationState = &rasterization,
 		pMultisampleState = &multisample,
@@ -256,19 +271,18 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := contex
 		pColorBlendState = &blend, 
 		renderPass = state.render_passes.main_render_pass,
 		subpass = 0,
-		layout = state.pipelines.traingle.layout,
+		layout = state.pipelines.triangle.layout,
 	}
 
 	NO_CACHE : vk.PipelineCache : {}
-	result = vk.CreateGraphicsPipelines(state.device.handle, NO_CACHE, 1, &pipeline_create_info, callbacks, &state.pipelines.traingle.handle)
+	result = vk.CreateGraphicsPipelines(state.device.handle, NO_CACHE, 1, &pipeline_create_info, callbacks, &state.pipelines.triangle.handle)
 	if result != .SUCCESS {
 		log.errorf("Graphics pipelines creation fail: %v", result)
 		return
 	}
 	when CONFIG_VERBOSE_LOG do log.debug("Graphics pipelines created")
 
-	state.resource_flags |= {.Pipelines}
-	when CONFIG_VERBOSE_LOG do log.debug("Graphics pipelines resource flag set")
+	set_resource_flag(&state.resource_flags, Vulkan_Init_Resource_Flag.Pipelines)
 
 	success = true
 	return
@@ -276,27 +290,21 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := contex
 
 cleanup_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
 	if .Pipelines not_in state.resource_flags {
-		log.warn("Called graphics pipelines cleanup when resource flag is unset")
+		log_called_when_resource_unset(#procedure, Vulkan_Init_Resource_Flag.Pipelines)
 		return
 	}
 
-	vk.DestroyPipeline(state.device.handle, state.pipelines.traingle.handle, callbacks)
+	vk.DestroyPipeline(state.device.handle, state.pipelines.triangle.handle, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Graphics pipelines destroyed")
 
-	vk.DestroyPipelineLayout(state.device.handle, state.pipelines.traingle.layout, callbacks)
+	vk.DestroyPipelineLayout(state.device.handle, state.pipelines.triangle.layout, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Pipeline layout destroyed")
 
-	vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.vertex_module, callbacks)
+	vk.DestroyShaderModule(state.device.handle, state.pipelines.triangle.vertex_module, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Vertex shader module destroyed")
 
-	vk.DestroyShaderModule(state.device.handle, state.pipelines.traingle.fragment_module, callbacks)
+	vk.DestroyShaderModule(state.device.handle, state.pipelines.triangle.fragment_module, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Fragment shader module destroyed")
-
-	delete(state.pipelines.traingle.vertex_shader.memory.([]u32), allocator)
-	when CONFIG_VERBOSE_LOG do log.debug("Vertex shader memory freed")
-
-	delete(state.pipelines.traingle.fragment_shader.memory.([]u32), allocator)
-	when CONFIG_VERBOSE_LOG do log.debug("Fragment shader memory freed")
 
 	state.resource_flags &~= {.Pipelines}
 	when CONFIG_VERBOSE_LOG do log.debug("Pipelines resource flag unset")
@@ -322,7 +330,7 @@ draw_frame :: proc(init: ^Vulkan_Init_State, state: ^Frame_Sync) {
 }
 
 create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
-	if .Frame_Sync in state.resources_flags do log.warn("Called frame synchronization creation when resource flag is set, possible error")
+	if .Frame_Sync in state.resources_flags do log_called_when_resource_set(#procedure, Frame_Resource_Flag.Frame_Sync)
 
 	fif := get_engine_configuration().settings.Frames_In_Flight
 
@@ -369,8 +377,7 @@ create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocat
 	}
 
 
-	state.resources_flags |= {.Frame_Sync}
-	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization resource flag set")
+	set_resource_flag(&state.resources_flags, Frame_Resource_Flag.Frame_Sync)
 
 	success = true
 	return
@@ -378,7 +385,7 @@ create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocat
 
 cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
 	if .Frame_Sync not_in state.resources_flags {
-		log.warn("Called frame synchronization cleanup when resource flag is unset, possible error")
+		log_called_when_resource_unset(#procedure, Frame_Resource_Flag.Frame_Sync)
 		return
 	}
 
@@ -392,7 +399,21 @@ cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, alloca
 	delete(state.sync, allocator)
 	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization cleaned up")
 
-	state.resources_flags &~= {.Frame_Sync}
-	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization resource flag unset")
+	unset_resource_flag(&state.resources_flags, Frame_Resource_Flag.Frame_Sync)
 }
 
+create_command_resources :: proc(init_state: ^Vulkan_Init_State) -> (success: bool) {
+	command_pool: vk.CommandPool
+	create_info := vk.CommandPoolCreateInfo{
+		sType = .COMMAND_POOL_CREATE_INFO,
+		queueFamilyIndex = u32(init_state.physical_devices.active.queue_indexes.graphics),
+		flags = {.RESET_COMMAND_BUFFER},
+	}
+	result := vk.CreateCommandPool(init_state.device.handle, &create_info, nil, &command_pool)
+	if result != .SUCCESS {
+		log.errorf("Command pool creation failed: %v", result)
+		return false
+	}
+
+	return true
+}

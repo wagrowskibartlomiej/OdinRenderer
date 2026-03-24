@@ -11,16 +11,11 @@ import "core:c"
 import android "./androidglue/ndkbindings"
 
 when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
-Android_State :: struct {
+Engine_State_Android :: struct {
 	app_ptr: ^android.android_app,
 	app_active: bool,
 	cmd_proc: Proc_Handle_Anroid_CMD,
 	input_proc: Proc_Handle_Android_Input,
-	renderer: Renderer_State,
-	window: Window_State,
-	ctx: runtime.Context,
-	logger: Android_Logger_Arena,
-	some_mem: []byte,
 }
 
 Proc_Handle_Anroid_CMD :: #type proc "system" (app: ^android.android_app, cmd: android.AppCmd)
