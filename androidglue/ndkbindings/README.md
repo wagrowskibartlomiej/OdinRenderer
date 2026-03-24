@@ -4,5 +4,5 @@
 
 ## This directory contains NDK wrapping code 
 
-Odin does not support Android NDK yet, so binding must be done by hand.  
-This code is included in source of renderer and is used when `DESKTOP_BUILD` configuration option is set to `false`. 
+Odin does not support Android NDK yet, so binding must be added externally.  
+This code is included in source of renderer and is used when `CONFIG_BUILD_TARGET` configuration option is set to `Build_Targets[.Mobile]`. 
