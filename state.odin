@@ -5,7 +5,6 @@ import "base:runtime"
 
 import "core:mem"
 import "core:log"
-import "core:fmt"
 
 Engine_Global_State :: struct {
 	app_context: Context_State,

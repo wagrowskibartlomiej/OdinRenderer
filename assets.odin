@@ -10,6 +10,11 @@ import "core:strings"
 import "core:hash/xxhash"
 import fp "core:path/filepath"
 
+/*
+TODO:   I should rehaul this assets pack building method, cause it is really not ideal
+	to rely on Asset_Descriptor and manually adding size to the procedure get_asset_descriptor_file_byte_size
+*/
+
 ASSET_PACK_NAME : string : "assets.pack"
 ASSET_PACK_HEADER : string : "ODINRENDERERASSETPACK"
 ASSET_PACK_VERSION : u64 : 1

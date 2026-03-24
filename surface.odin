@@ -16,7 +16,7 @@ Surface_State :: struct {
 
 @(private="package")
 create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
-	if .Surface in state.resource_flags do log.warn("Surface creation called when resource flag is set, possiible error")
+	if .Surface in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Init_Resource_Flag.Surface)
 
 	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do success = glfw_create_surface(state, window_state, callbacks)
 	else when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
@@ -34,7 +34,7 @@ create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, a
 @(private="package")
 cleanup_surface :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallbacks = nil) {
 	if .Surface not_in state.resource_flags {
-		log.warn("Called surface cleanup when resource flag is unset")
+		log_called_when_resource_unset(#procedure, Vulkan_Init_Resource_Flag.Surface)
 		return
 	}
 
@@ -44,8 +44,7 @@ cleanup_surface :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCall
 		else do log.debug("Android surface destroyed")
 	}
 
-	state.resource_flags &~= {.Surface}
-	when CONFIG_VERBOSE_LOG  do log.debug("Surface resource flag unset")
+	unset_resource_flag(&state.resource_flags, Vulkan_Init_Resource_Flag.Surface)
 }
 
 glfw_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
@@ -56,8 +55,7 @@ glfw_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_Sta
 	}
 	when CONFIG_VERBOSE_LOG  do log.debug("GLFW Surface created")
 	
-	state.resource_flags |= {.Surface}
-	when CONFIG_VERBOSE_LOG  do log.debug("Surface resource flag set")
+	set_resource_flag(&state.resource_flags, Vulkan_Init_Resource_Flag.Surface)
 
 	success = true
 	return
@@ -97,8 +95,7 @@ android_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_
 	}
 	when CONFIG_VERBOSE_LOG do log.debug("Android surface created")
 
-	state.resource_flags |= {.Surface}
-	when CONFIG_VERBOSE_LOG do log.debug("Surface resource flag set")
+	set_resource_flag(&state.resource_flags, Vulkan_Init_Resource_Flag.Surface)
 
 	success = true
 	return

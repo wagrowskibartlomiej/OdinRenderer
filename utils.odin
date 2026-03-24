@@ -3,6 +3,9 @@ package engine
 import "base:intrinsics"
 import "core:log"
 
+APPLICATION_NAME :: "ODIN_RENDERER"
+ENGINE_NAME :: "ODIN_RENDERER_ENGINE"
+
 // Extracts variant part of version from Vulkan encoded version number.
 decode_vk_version_variant :: proc "contextless" (version: u32) -> u32 {
 	return version >> 29
@@ -31,10 +34,18 @@ decode_vk_version :: proc "contextless" (version: u32) -> [4]u32 {
 
 set_resource_flag :: #force_inline proc(flags: ^bit_set[$T], flag: T) where intrinsics.type_is_enum(T) {
 	flags^ |= bit_set[T]{flag}
-	when CONFIG_VERBOSE_LOG do log.debugf("Resource flag %v set", flag)
+	when CONFIG_VERBOSE_LOG do log.debugf("%v resource flag set", flag)
 }
 
 unset_resource_flag :: #force_inline proc(flags: ^bit_set[$T], flag: T) where intrinsics.type_is_enum(T) {
 	flags^ |= bit_set[T]{flag}
-	when CONFIG_VERBOSE_LOG do log.debugf("Resource flag %v unset", flag)
+	when CONFIG_VERBOSE_LOG do log.debugf("%v resource flag unset", flag)
+}
+
+log_called_when_resource_set :: proc(proc_name: string, resource_flag: $T) where intrinsics.type_is_enum(T) {
+	log.warnf("Called '%v' when resource flag '%v' is set", proc_name, resource_flag)
+}
+
+log_called_when_resource_unset :: proc(proc_name: string, resource_flag: $T) where intrinsics.type_is_enum(T) {
+	log.warnf("Called '%v' when resource flag '%v' is not set", proc_name, resource_flag)
 }
