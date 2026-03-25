@@ -21,20 +21,23 @@ Pipeline_State :: struct {
 	fragment_module: vk.ShaderModule,
 }
 
-Commands_State :: struct {
-	command_pools: []vk.CommandPool,
+//TODO: Command State and command resource creation needs to be changed, but for now it's in the simplest form
+Command_State :: struct {
+	pool: vk.CommandPool,
+	buffers: [dynamic]vk.CommandBuffer,
 }
 
 
 Frame_Resource_Flag :: enum {
-	Frame_Sync
+	Frame_Sync,
+	Command,
 }
 
 Frame_Resources_Flags :: bit_set[Frame_Resource_Flag]
 
 Frame_State :: struct {
 	sync: []Frame_Sync,
-	command: Commands_State,
+	graphics_commands: []Command_State,
 	resources_flags: Frame_Resources_Flags,
 }
 
@@ -397,23 +400,64 @@ cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, alloca
 	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization destroyed")
 
 	delete(state.sync, allocator)
-	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization cleaned up")
+	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization memory destroyed")
 
 	unset_resource_flag(&state.resources_flags, Frame_Resource_Flag.Frame_Sync)
+	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization cleaned up")
 }
 
-create_command_resources :: proc(init_state: ^Vulkan_Init_State) -> (success: bool) {
-	command_pool: vk.CommandPool
-	create_info := vk.CommandPoolCreateInfo{
+create_command_resources :: proc(init_state: ^Vulkan_Init_State, frame_state: ^Frame_State, callbacks: ^vk.AllocationCallbacks = nil, allocator := context.allocator) -> (success: bool) {
+	if .Command in frame_state.resources_flags do log_called_when_resource_set(#procedure, Frame_Resource_Flag.Command)
+	fif := get_all_settings().Frames_In_Flight
+
+	frame_state.graphics_commands = make([]Command_State, fif, allocator)
+	defer if !success do delete(frame_state.graphics_commands, allocator)
+
+	// For now, we're just gonna use graphics queue only
+	//TODO: get advantage of async queues if they're available
+	pool_create_info := vk.CommandPoolCreateInfo{
 		sType = .COMMAND_POOL_CREATE_INFO,
 		queueFamilyIndex = u32(init_state.physical_devices.active.queue_indexes.graphics),
 		flags = {.RESET_COMMAND_BUFFER},
 	}
-	result := vk.CreateCommandPool(init_state.device.handle, &create_info, nil, &command_pool)
-	if result != .SUCCESS {
-		log.errorf("Command pool creation failed: %v", result)
-		return false
+
+	for &state, i in frame_state.graphics_commands {
+		result := vk.CreateCommandPool(init_state.device.handle, &pool_create_info, callbacks, &state.pool)
+		if result != .SUCCESS {
+			log.errorf("Command pool creation failure: %v", result)
+			return false
+		}
+
+		defer if !success {
+			vk.DestroyCommandPool(init_state.device.handle, state.pool, callbacks)
+			for j in 0 ..< i {
+				vk.DestroyCommandPool(init_state.device.handle, frame_state.graphics_commands[j].pool, callbacks)
+				delete(frame_state.graphics_commands[j].buffers)
+			}
+		}
+
+		state.buffers = make([dynamic]vk.CommandBuffer, 0, 1, allocator)
+		defer if !success do delete(state.buffers)
+
+		success = true
+	}
+	when CONFIG_VERBOSE_LOG do log.debug("Command resources created")
+
+
+	set_resource_flag(&frame_state.resources_flags, Frame_Resource_Flag.Command)
+	return true
+}
+
+cleanup_command_resources :: proc(init_state: ^Vulkan_Init_State, frame_state: ^Frame_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
+	if .Command not_in frame_state.resources_flags do log_called_when_resource_unset(#procedure, Frame_Resource_Flag.Command)
+	for state in frame_state.graphics_commands {
+		delete(state.buffers)
+		vk.DestroyCommandPool(init_state.device.handle, state.pool, callbacks)
 	}
 
-	return true
+	delete(frame_state.graphics_commands, allocator)
+
+	when CONFIG_VERBOSE_LOG do log.debug("Command resources cleaned up")
+
+	unset_resource_flag(&frame_state.resources_flags, Frame_Resource_Flag.Command)
 }

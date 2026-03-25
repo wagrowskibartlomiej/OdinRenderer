@@ -159,6 +159,11 @@ initialize_vulkan :: proc(window_state: ^Window_State, assets_state: ^Assets_Sta
 		return
 	}
 
+	success = create_command_resources(&state.init, &state.frame, callbacks, allocator)
+	if !success {
+		log.fatalf("Failed to create command resources")
+		return
+	}
 
 	when CONFIG_VERBOSE_LOG do log.debug("Vulkan's initialization successful")
 	return
@@ -167,7 +172,8 @@ initialize_vulkan :: proc(window_state: ^Window_State, assets_state: ^Assets_Sta
 cleanup_vulkan :: proc(state: ^Renderer_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
 	// Flags checks are here to not print warning when exiting early, 
 	// it probably won't be a bottleneck anyway 
-
+	
+	if .Command in state.frame.resources_flags do cleanup_command_resources(&state.init, &state.frame, allocator, callbacks)
 	if .Pipelines in state.init.resource_flags do cleanup_graphics_pipelines(&state.init, allocator, callbacks)
 	if .Render_Passes in state.init.resource_flags do cleanup_renderer_passes(&state.init, callbacks)
 	if .Swapchain in state.init.resource_flags do cleanup_swapchain(&state.init, allocator, callbacks)
