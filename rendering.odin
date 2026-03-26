@@ -320,12 +320,19 @@ init_frame :: proc(init: ^Vulkan_Init_State, allocator := context.allocator, tem
 		return
 	}
 
+	success = create_command_resources(init, &state, callbacks, allocator)
+	if !success {
+		log.fatalf("Failed to create command resources")
+		return
+	}
+
 	when CONFIG_VERBOSE_LOG do log.debug("Frame initalization successful")
 	return
 }
 
 cleanup_frame :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) { 
 	if .Frame_Sync in state.resources_flags do cleanup_frame_sync(init, state, allocator, callbacks)
+	if .Command in state.resources_flags do cleanup_command_resources(init, state, allocator, callbacks)
 }
 
 draw_frame :: proc(init: ^Vulkan_Init_State, state: ^Frame_Sync) {
