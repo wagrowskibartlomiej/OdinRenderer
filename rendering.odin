@@ -313,14 +313,14 @@ cleanup_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := conte
 	when CONFIG_VERBOSE_LOG do log.debug("Pipelines resource flag unset")
 }
 
-init_frame :: proc(init: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (state: Frame_State) { 
-	success := create_frame_sync(init, &state, allocator, temp_allocator, callbacks)
+init_frame :: proc(state: ^Frame_State, init: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) { 
+	success = create_frame_sync(init, state, allocator, temp_allocator, callbacks)
 	if !success {
 		log.fatal("Frame synchronization creation failed")
 		return
 	}
 
-	success = create_command_resources(init, &state, callbacks, allocator)
+	success = create_command_resources(init, state, callbacks, allocator)
 	if !success {
 		log.fatalf("Failed to create command resources")
 		return
@@ -361,7 +361,7 @@ create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocat
 		result := vk.CreateFence(init.device.handle, &fence_create_info, callbacks, &state.sync[i].frame_done)
 		if result != .SUCCESS {
 			log.errorf("Fence creation error: %v", result)
-			return
+			return false
 		} else do append(&fence_tracker, state.sync[i].frame_done)
 	}
 	
@@ -376,21 +376,21 @@ create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocat
 		result := vk.CreateSemaphore(init.device.handle, &semaphore_create_info, callbacks, &state.sync[i].image_available)
 		if result != .SUCCESS {
 			log.errorf("Semaphore creation error: %v", result)
-			return
+			return false
 		} else do append(&sem_tracker, state.sync[i].image_available)
 
 		result = vk.CreateSemaphore(init.device.handle, &semaphore_create_info, callbacks, &state.sync[i].render_done)
 		if result != .SUCCESS {
 			log.errorf("Semaphore creation error: %v", result)
-			return
+			return false
 		} else do append(&sem_tracker, state.sync[i].render_done)
 	}
+	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization resources created")
 
 
 	set_resource_flag(&state.resources_flags, Frame_Resource_Flag.Frame_Sync)
 
-	success = true
-	return
+	return true
 }
 
 cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
@@ -404,10 +404,10 @@ cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, alloca
 		vk.DestroySemaphore(init.device.handle, s.render_done, callbacks)
 		vk.DestroyFence(init.device.handle, s.frame_done, callbacks)
 	}
-	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization destroyed")
+	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization resources destroyed")
 
 	delete(state.sync, allocator)
-	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization memory destroyed")
+	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization memory freed")
 
 	unset_resource_flag(&state.resources_flags, Frame_Resource_Flag.Frame_Sync)
 	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization cleaned up")

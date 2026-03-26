@@ -59,7 +59,9 @@ when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do main :: proc () {
 		cleanup_vulkan(&state.renderer)
 		return
 	}
-
 	defer cleanup_vulkan(&state.renderer)
+
+	init_frame(&state.renderer.frame, &state.renderer.init)
+	defer cleanup_frame(&state.renderer.init, &state.renderer.frame)
 }
 
