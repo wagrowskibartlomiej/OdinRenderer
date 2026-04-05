@@ -47,7 +47,7 @@ Frame_Sync :: struct {
 	image_available: vk.Semaphore,
 }
 
-create_render_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+create_render_passes :: proc(state: ^Vulkan_Init_State, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
 	if .Render_Passes in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Init_Resource_Flag.Render_Passes)
 
 	color_ref := vk.AttachmentReference{
@@ -101,7 +101,7 @@ create_render_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Allocatio
 	return
 }
 
-cleanup_renderer_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallbacks = nil) {
+cleanup_renderer_passes :: proc(state: ^Vulkan_Init_State, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Render_Passes not_in state.resource_flags {
 		log_called_when_resource_unset(#procedure, Vulkan_Init_Resource_Flag.Render_Passes)
 		return
@@ -113,7 +113,7 @@ cleanup_renderer_passes :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.Alloca
 	unset_resource_flag(&state.resource_flags, Vulkan_Init_Resource_Flag.Render_Passes)
 }
 
-create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, assets_state: ^Assets_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, assets_state: ^Assets_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
 	if .Pipelines in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Init_Resource_Flag.Pipelines)
 
 	v, vertex_present := get_asset_memory(assets_state, .Shader, "default_vertex.spv", "spirv")
@@ -182,7 +182,7 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, assets_state: ^Asse
 	}
 	binding_desc := vk.VertexInputBindingDescription{
 		inputRate = .VERTEX,
-		stride = 8
+		stride = size_of(Vec2),
 	}
 
 	vertex_input := vk.PipelineVertexInputStateCreateInfo{
@@ -291,7 +291,7 @@ create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, assets_state: ^Asse
 	return
 }
 
-cleanup_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
+cleanup_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Pipelines not_in state.resource_flags {
 		log_called_when_resource_unset(#procedure, Vulkan_Init_Resource_Flag.Pipelines)
 		return
@@ -313,14 +313,14 @@ cleanup_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := conte
 	when CONFIG_VERBOSE_LOG do log.debug("Pipelines resource flag unset")
 }
 
-init_frame :: proc(state: ^Frame_State, init: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) { 
+init_frame :: proc(state: ^Frame_State, init: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) { 
 	success = create_frame_sync(init, state, allocator, temp_allocator, callbacks)
 	if !success {
 		log.fatal("Frame synchronization creation failed")
 		return
 	}
 
-	success = create_command_resources(init, state, callbacks, allocator)
+	success = create_command_resources(init, state, allocator, callbacks)
 	if !success {
 		log.fatalf("Failed to create command resources")
 		return
@@ -330,7 +330,7 @@ init_frame :: proc(state: ^Frame_State, init: ^Vulkan_Init_State, allocator := c
 	return
 }
 
-cleanup_frame :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) { 
+cleanup_frame :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) { 
 	if .Frame_Sync in state.resources_flags do cleanup_frame_sync(init, state, allocator, callbacks)
 	if .Command in state.resources_flags do cleanup_command_resources(init, state, allocator, callbacks)
 }
@@ -339,7 +339,7 @@ draw_frame :: proc(init: ^Vulkan_Init_State, state: ^Frame_Sync) {
 	
 }
 
-create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
 	if .Frame_Sync in state.resources_flags do log_called_when_resource_set(#procedure, Frame_Resource_Flag.Frame_Sync)
 
 	fif := get_engine_configuration().settings.Frames_In_Flight
@@ -393,7 +393,7 @@ create_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocat
 	return true
 }
 
-cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
+cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Frame_Sync not_in state.resources_flags {
 		log_called_when_resource_unset(#procedure, Frame_Resource_Flag.Frame_Sync)
 		return
@@ -413,7 +413,7 @@ cleanup_frame_sync :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, alloca
 	when CONFIG_VERBOSE_LOG do log.debug("Frame synchronization cleaned up")
 }
 
-create_command_resources :: proc(init_state: ^Vulkan_Init_State, frame_state: ^Frame_State, callbacks: ^vk.AllocationCallbacks = nil, allocator := context.allocator) -> (success: bool) {
+create_command_resources :: proc(init_state: ^Vulkan_Init_State, frame_state: ^Frame_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
 	if .Command in frame_state.resources_flags do log_called_when_resource_set(#procedure, Frame_Resource_Flag.Command)
 	fif := get_all_settings().Frames_In_Flight
 
@@ -455,7 +455,7 @@ create_command_resources :: proc(init_state: ^Vulkan_Init_State, frame_state: ^F
 	return true
 }
 
-cleanup_command_resources :: proc(init_state: ^Vulkan_Init_State, frame_state: ^Frame_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
+cleanup_command_resources :: proc(init_state: ^Vulkan_Init_State, frame_state: ^Frame_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Command not_in frame_state.resources_flags do log_called_when_resource_unset(#procedure, Frame_Resource_Flag.Command)
 	for state in frame_state.graphics_commands {
 		delete(state.buffers)

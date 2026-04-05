@@ -54,7 +54,7 @@ choose_swapchain_presentation_mode :: proc(present_modes: []vk.PresentModeKHR) -
 	return present_modes[0]
 }
 
-create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_swapchain: vk.SwapchainKHR, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_swapchain: vk.SwapchainKHR, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
 	ensure(.Surface in state.resource_flags, "Surface must be created before swapchain creation")
 	if .Swapchain in state.resource_flags do log.warn("Called swapchain creation when resource flag is set, possible error")
 
@@ -163,7 +163,7 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 	return 
 }
 
-cleanup_swapchain :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) {
+cleanup_swapchain :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Swapchain not_in state.resource_flags {
 		log.warn("Called swapchain cleanup when swapchain resource flag is unset")
 		return

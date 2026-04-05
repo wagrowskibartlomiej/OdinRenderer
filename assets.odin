@@ -21,6 +21,7 @@ ASSET_PACK_VERSION : u64 : 1
 
 PKG_BACKUP_NAME :: "PKGUNRESLOVED"
 // TODO: Optimally building proccess should generate enum values of packages and use that instead of strings
+// NOTE: Maybe add copy_number field to the structure to allow independent copies
 Asset_Runtime :: struct {
 	type: Asset_Type,
 	extension: Asset_Supported_File_Extension,

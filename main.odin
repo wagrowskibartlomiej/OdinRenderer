@@ -6,7 +6,7 @@ import "core:log"
 import "core:mem"
 import "base:runtime"
 
-
+import vk "vendor:vulkan"
 
 when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do main :: proc () {
 	state: Engine_Global_State
@@ -63,5 +63,47 @@ when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do main :: proc () {
 
 	init_frame(&state.renderer.frame, &state.renderer.init)
 	defer cleanup_frame(&state.renderer.init, &state.renderer.frame)
+
+	gpu_initialize_memory_manager(&state.renderer.init, &state.renderer.memory)
+	defer gpu_cleanup_memory_manager(&state.renderer.init, &state.renderer.memory)
+
+	buff: GPU_Resource_Handle = vk.Buffer{}
+	info := GPU_Resource_Create_Info{
+		buffer = {
+			sharingMode = .EXCLUSIVE, 
+			size = 128,
+			usage = {.TRANSFER_DST, .TRANSFER_SRC, .VERTEX_BUFFER},
+			sType = .BUFFER_CREATE_INFO,
+		}
+	}
+
+	id, res_err, created := gpu_create_resource_raw(&state.renderer.init, &state.renderer.memory, .Vertex_Buffer, &buff, &info, nil, 0)
+	if res_err != nil do return
+	log.infof("Resource created %v: ID %v", created, id)
+
+	buff2: GPU_Resource_Handle = vk.Buffer{}
+	info2 := GPU_Resource_Create_Info{
+		buffer = {
+			sharingMode = .EXCLUSIVE, 
+			size = 128,
+			usage = {.TRANSFER_DST, .TRANSFER_SRC, .VERTEX_BUFFER},
+			sType = .BUFFER_CREATE_INFO,
+		}
+	}
+
+	id2, res_err2, created2 := gpu_create_resource_raw(&state.renderer.init, &state.renderer.memory, .Vertex_Buffer, &buff, &info, nil, 0)
+	if res_err2 != nil do return
+	log.infof("Resource created %v: ID %v", created2, id2)
+
+	_, do_exists := &state.renderer.memory.resources[id2]
+	log.infof("Do exists: %v (len: %v)", do_exists, len(&state.renderer.memory.resources))
+	log.infof("Block index 0: allocated %v Bytes", state.renderer.memory.blocks[0].allocated)
+
+	gpu_destroy_resource_raw(&state.renderer.init, &state.renderer.memory, id2)
+
+	_, do_exists = &state.renderer.memory.resources[id2]
+
+	log.infof("Do exists: %v (len: %v)", do_exists, len(&state.renderer.memory.resources))
+	log.infof("Block index 0: allocated %v Bytes", state.renderer.memory.blocks[0].allocated)
 }
 

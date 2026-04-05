@@ -15,7 +15,7 @@ Surface_State :: struct {
 }
 
 @(private="package")
-create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, allocator := context.allocator, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
 	if .Surface in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Init_Resource_Flag.Surface)
 
 	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do success = glfw_create_surface(state, window_state, callbacks)
@@ -32,7 +32,7 @@ create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, a
 }
 
 @(private="package")
-cleanup_surface :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCallbacks = nil) {
+cleanup_surface :: proc(state: ^Vulkan_Init_State, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Surface not_in state.resource_flags {
 		log_called_when_resource_unset(#procedure, Vulkan_Init_Resource_Flag.Surface)
 		return
@@ -47,7 +47,7 @@ cleanup_surface :: proc(state: ^Vulkan_Init_State, callbacks: ^vk.AllocationCall
 	unset_resource_flag(&state.resource_flags, Vulkan_Init_Resource_Flag.Surface)
 }
 
-glfw_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+glfw_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
 	result := glfw.CreateWindowSurface(state.instance.handle, cast(glfw.WindowHandle)window_state.handle, callbacks, &state.surface.handle)
 	if result != .SUCCESS {
 		log.errorf("GLFW window surface creation error: %v", result)
@@ -76,7 +76,7 @@ VkAndroidSurfaceCreateInfoKHR :: struct {
 
 Proc_vkCreateAndroidSurfaceKHR :: #type proc "system" (instance: vk.Instance, pCreateInfo: ^VkAndroidSurfaceCreateInfoKHR, pAllocator: ^vk.AllocationCallbacks, pSurface: ^vk.SurfaceKHR) -> vk.Result
 
-android_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, callbacks: ^vk.AllocationCallbacks = nil) -> (success: bool) {
+android_create_surface :: proc(state: ^Vulkan_Init_State, window_state: ^Window_State, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
 	symbol, found := dynlib.symbol_address(state.vklib, "vkCreateAndroidSurfaceKHR")
 	if !found {
 		log.fatal("Cannot found address of 'vkCreateAndroidSurfaceKHR', the application cannot continue.")
