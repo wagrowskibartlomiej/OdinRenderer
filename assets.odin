@@ -110,7 +110,10 @@ Asset_Open :: proc(path: string, flags: int = os.O_RDONLY, mode: int = 0o000) ->
 	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do return os.open(path, flags, mode)
 	else when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
 		when ODIN_PLATFORM_SUBTARGET != .Android do #panic(#proceure + " is not implemented for " + ODIN_PLATFORM_SUBTARGET + " Mobile subtarget")
-		else do android_asset_open()
+		else {
+			android_assets_open()
+			return {}, nil // TEMPORARY
+		}
 	} else do #panic(#procedure + " is not implemented for " + CONFIG_BUILD_TARGET + " build target")
 }
 

@@ -5,6 +5,26 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ANDROID_DIR="$ROOT_DIR/androidglue/apkbuild"
 KEYSTORE=".keystore"
 APK_OUT="$ROOT_DIR/OdinRenderer.apk"
+HIDDEN_EXT=".buildtime-temp-hidden"
+
+cleanup() {
+    echo ""
+    echo "--- Restoring files names *_desktop.odin ---"
+    find "$ROOT_DIR" -name "*${HIDDEN_EXT}" -type f | while read -r f; do
+        mv "$f" "${f%$HIDDEN_EXT}"
+        echo "  [+] Restored: ${f%$HIDDEN_EXT}"
+    done
+    echo "--------------------------------------------"
+}
+
+trap cleanup EXIT
+
+echo "--- Hiding files names *_desktop.odin before Android build ---"
+find "$ROOT_DIR" -name "*_desktop.odin" -type f | while read -r f; do
+    mv "$f" "${f}${HIDDEN_EXT}"
+    echo "  [-] Hidden: ${f}${HIDDEN_EXT}"
+done
+echo "---------------------------------------------------------------"
 
 cd "$ANDROID_DIR"
 
@@ -37,12 +57,11 @@ odin build . \
   -show-system-calls \
   -extra-linker-flags="-lvulkan"
 
-
 name="$(basename "$ROOT_DIR")"
 
 mkdir -p "$ANDROID_DIR/android/lib/lib/arm64-v8a"
 mv "$ROOT_DIR/$name.so" \
-   "$ANDROID_DIR/android/lib/lib/arm64-v8a/libmain.so"
+    "$ANDROID_DIR/android/lib/lib/arm64-v8a/libmain.so"
 
 echo "Bundling APK"
 
@@ -56,4 +75,3 @@ APK_BUILT="$(ls *.apk | head -n1)"
 cp "$APK_BUILT" "$APK_OUT"
 
 echo "APK ready: $APK_OUT"
-
