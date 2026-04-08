@@ -41,6 +41,7 @@ Vulkan_Init_State :: struct {
 	swapchain: Swapchain_State,
 	render_passes: Render_Passes_State,
 	pipelines: Pipelines_State,
+	framebuffers: Framebuffers_State,
 }
 
 Instance_State :: struct {
@@ -107,39 +108,40 @@ Vulkan_Init_Resource_Flag :: enum {
 	Swapchain,
 	Render_Passes,
 	Pipelines,
+	Framebuffers,
 }
 Vulkan_Init_Resource_Flags :: bit_set[Vulkan_Init_Resource_Flag]
 
-initialize_vulkan :: proc(window_state: ^Window_State, assets_state: ^Assets_State, context_state: ^Context_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (state: Renderer_State) {	
-	load_vklib(&state)
+initialize_vulkan :: proc(renderer: ^Renderer_State, engine_state: ^Engine_Global_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {	
+	load_vklib(renderer)
 
-	success := create_instance(&state.init, allocator, temp_allocator, callbacks)
+	success := create_instance(&renderer.init, allocator, temp_allocator, callbacks)
 	if !success {
 		log.fatal("Cannot create Vulkan instance")
 		return 
 	}
 
 	if options_get_unsafe(.Debug_Layers) {
-		success = create_debug_utils(&state.init, context_state, callbacks)
+		success = create_debug_utils(&renderer.init, &engine_state.app_context, callbacks)
 		if !success {
 			log.fatal("Cannot create debug utils messenger")
 			return 
 		}
 	}
 
-	success = create_surface(&state.init, window_state, allocator, callbacks)
+	success = create_surface(&renderer.init, &engine_state.window, allocator, callbacks)
 	if !success {
 		log.fatal("Failed to create surface")
 		return
 	}
 
-	success = pick_physical_device(&state.init, allocator, temp_allocator)
+	success = pick_physical_device(&renderer.init, allocator, temp_allocator)
 	if !success {
 		log.fatal("Failed to pick physical device ")
 		return
 	}
 
-	success = create_device(&state.init, allocator, callbacks)
+	success = create_device(&renderer.init, allocator, callbacks)
 	if !success {
 		log.fatal("Failed to create device")
 		return
@@ -147,21 +149,27 @@ initialize_vulkan :: proc(window_state: ^Window_State, assets_state: ^Assets_Sta
 
 	NO_OLD_SWAPCHAIN: vk.SwapchainKHR : {}
 
-	success = create_swapchain(&state.init, window_state.handle, NO_OLD_SWAPCHAIN, allocator, callbacks)
+	success = create_swapchain(&renderer.init, engine_state.window.handle, NO_OLD_SWAPCHAIN, allocator, callbacks)
 	if !success {
 		log.fatal("Failed to create swapchain")
 		return
 	}
 
-	success = create_render_passes(&state.init, callbacks)
+	success = create_render_passes(&renderer.init, callbacks)
 	if !success {
 		log.fatal("Failed to create render passes")
 		return
 	}
 
-	success = create_graphics_pipelines(&state.init, assets_state, allocator, temp_allocator, callbacks)
+	success = create_graphics_pipelines(&renderer.init, &engine_state.assets, allocator, temp_allocator, callbacks)
 	if !success {
 		log.fatal("Failed to create graphics pipelines")
+		return
+	}
+
+	success = build_framebuffers(&renderer.init, allocator, callbacks)
+	if !success {
+		log.fatal("Failed to build framebuffers")
 		return
 	}
 
@@ -169,19 +177,19 @@ initialize_vulkan :: proc(window_state: ^Window_State, assets_state: ^Assets_Sta
 	return
 }
 
-cleanup_vulkan :: proc(state: ^Renderer_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
+cleanup_vulkan :: proc(renderer: ^Renderer_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	// Flags checks are here to not print warning when exiting early, 
 	// it probably won't be a bottleneck anyway 
-	
-	if .Pipelines in state.init.resource_flags do cleanup_graphics_pipelines(&state.init, allocator, callbacks)
-	if .Render_Passes in state.init.resource_flags do cleanup_renderer_passes(&state.init, callbacks)
-	if .Swapchain in state.init.resource_flags do cleanup_swapchain(&state.init, allocator, callbacks)
-	if .Surface in state.init.resource_flags do cleanup_surface(&state.init, callbacks)
-	if .Device in state.init.resource_flags do cleanup_device(&state.init, callbacks)
-	if .Physical_Device in state.init.resource_flags do cleanup_physical_devices(&state.init, allocator)
-	if options_get_unsafe(.Debug_Layers) do if .Debug in state.init.resource_flags do cleanup_debug_utils(&state.init, callbacks)
-	if .Instance in state.init.resource_flags do cleanup_instance(&state.init, allocator, callbacks)
-	if .Library in state.init.resource_flags do unload_vklib(state)
+	if .Framebuffers in renderer.init.resource_flags do cleanup_framebuffers(&renderer.init)
+	if .Pipelines in renderer.init.resource_flags do cleanup_graphics_pipelines(&renderer.init, allocator, callbacks)
+	if .Render_Passes in renderer.init.resource_flags do cleanup_renderer_passes(&renderer.init, callbacks)
+	if .Swapchain in renderer.init.resource_flags do cleanup_swapchain(&renderer.init, allocator, callbacks)
+	if .Surface in renderer.init.resource_flags do cleanup_surface(&renderer.init, callbacks)
+	if .Device in renderer.init.resource_flags do cleanup_device(&renderer.init, callbacks)
+	if .Physical_Device in renderer.init.resource_flags do cleanup_physical_devices(&renderer.init, allocator)
+	if options_get_unsafe(.Debug_Layers) do if .Debug in renderer.init.resource_flags do cleanup_debug_utils(&renderer.init, callbacks)
+	if .Instance in renderer.init.resource_flags do cleanup_instance(&renderer.init, allocator, callbacks)
+	if .Library in renderer.init.resource_flags do unload_vklib(renderer)
 }
 
 load_vklib :: proc(state: ^Renderer_State) {

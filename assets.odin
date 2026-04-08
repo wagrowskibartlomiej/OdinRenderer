@@ -3,6 +3,8 @@ package engine
 
 import "base:runtime"
 
+import android "androidglue/ndkbindings"
+
 import os "core:os/old"
 import "core:log"
 import "core:slice"
@@ -101,6 +103,15 @@ Asset_Supported_File_Extension_String :: [Asset_Supported_File_Extension]string 
 	.PACK = "pack",
 	.SPIRV = "spv",
 	.TRIANGLE = "tri"
+}
+
+// Abstraction over opening to work on Desktop && Mobile
+Asset_Open :: proc(path: string, flags: int = os.O_RDONLY, mode: int = 0o000) -> (os.Handle, os.Error) {
+	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do return os.open(path, flags, mode)
+	else when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
+		when ODIN_PLATFORM_SUBTARGET != .Android do #panic(#proceure + " is not implemented for " + ODIN_PLATFORM_SUBTARGET + " Mobile subtarget")
+		else do android_asset_open()
+	} else do #panic(#procedure + " is not implemented for " + CONFIG_BUILD_TARGET + " build target")
 }
 
 load_asset :: proc{

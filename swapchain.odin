@@ -55,8 +55,7 @@ choose_swapchain_presentation_mode :: proc(present_modes: []vk.PresentModeKHR) -
 }
 
 create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_swapchain: vk.SwapchainKHR, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
-	ensure(.Surface in state.resource_flags, "Surface must be created before swapchain creation")
-	if .Swapchain in state.resource_flags do log.warn("Called swapchain creation when resource flag is set, possible error")
+	if .Swapchain in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Init_Resource_Flag.Swapchain)
 
 	NON_STEREOSCOPIC :: 1
 	DEFAULT_USAGE : vk.ImageUsageFlags : {.TRANSFER_DST, .COLOR_ATTACHMENT}

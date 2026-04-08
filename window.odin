@@ -1,55 +1,24 @@
-#+private file
-
 package engine
 
-import "core:log"
-
-import "vendor:glfw"
-
-import android "androidglue/ndkbindings"
-
-create_glfw_window :: proc() -> (window: Window_State) {
-	if !glfw.Init() do log.panic("Glfw not initialized")
-	when CONFIG_VERBOSE_LOG do log.debug("Glfw initialized")
-
-	glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
-	window.handle = glfw.CreateWindow(800, 600, "Odin Renderer", nil, nil)
-
-	return
-}
-cleanup_glfw_window :: proc(state: ^Window_State) {
-	glfw.DestroyWindow(glfw.WindowHandle(state.handle))
-	when CONFIG_VERBOSE_LOG do log.debug("Glfw cleaned up")
-}
-
-when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] && ODIN_PLATFORM_SUBTARGET == .Android {
-get_android_window :: proc(user_data: rawptr) -> (window: Window_State) { 
-	assert(user_data != nil)
-	window.handle = cast(^android.ANativeWindow)user_data
-	when CONFIG_VERBOSE_LOG do log.debug("Android window state created")
-	return
-}
-cleanup_android_window :: proc() {
-	when CONFIG_VERBOSE_LOG do log.debug("Android window state cleaned up")
-}
-}
-
-
-@(private="package")
 Window_State :: struct {
-	handle: rawptr, // Either GLFW Handle or ANativeWindow
+	created: bool,
+	handle, // Either GLFW Handle or ANativeWindow
+	user_data: rawptr,
 }
 
-@(private="package")
-create_window :: proc(user_data: rawptr) -> (window: Window_State) {
-	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do return create_glfw_window()
-	else do return get_android_window(user_data)
+// Creates window with GLFW for desktop targets or retrieves it for Android from passed platform context.
+create_window :: proc(window: ^Window_State, platform_context: rawptr) -> (success: bool) {
+	if window == nil do return false
+
+	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do return create_glfw_window(window)
+	else {
+		when ODIN_PLATFORM_SUBTARGET == .Android do return retrieve_android_window(window, platform_context)
+		else do #panic(#procedure + " is not implemented for " + ODIN_PLATFORM_SUBTARGET + " subtarget")
+	}
 }
 
-@(private="package")
-cleanup_window :: proc(state: ^Window_State) {
+// Cleanes up window created with GLFW for desktop targets.
+cleanup_window :: proc(state: ^Window_State, platform_context: rawptr) {
 	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do cleanup_glfw_window(state)
-	else do cleanup_android_window()
+	else when ODIN_PLATFORM_SUBTARGET != .Android do #panic(#procedure + " is not implemented for " + ODIN_PLATFORM_SUBTARGET + " subtarget")
 }
-
-

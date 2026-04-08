@@ -313,7 +313,7 @@ cleanup_graphics_pipelines :: proc(state: ^Vulkan_Init_State, allocator := conte
 	when CONFIG_VERBOSE_LOG do log.debug("Pipelines resource flag unset")
 }
 
-init_frame :: proc(state: ^Frame_State, init: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) { 
+init_frame_resources :: proc(state: ^Frame_State, init: ^Vulkan_Init_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) { 
 	success = create_frame_sync(init, state, allocator, temp_allocator, callbacks)
 	if !success {
 		log.fatal("Frame synchronization creation failed")
@@ -330,7 +330,7 @@ init_frame :: proc(state: ^Frame_State, init: ^Vulkan_Init_State, allocator := c
 	return
 }
 
-cleanup_frame :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) { 
+cleanup_frame_resources :: proc(init: ^Vulkan_Init_State, state: ^Frame_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) { 
 	if .Frame_Sync in state.resources_flags do cleanup_frame_sync(init, state, allocator, callbacks)
 	if .Command in state.resources_flags do cleanup_command_resources(init, state, allocator, callbacks)
 }
@@ -443,8 +443,21 @@ create_command_resources :: proc(init_state: ^Vulkan_Init_State, frame_state: ^F
 			}
 		}
 
-		state.buffers = make([dynamic]vk.CommandBuffer, 0, 1, allocator)
+		state.buffers = make([dynamic]vk.CommandBuffer, 1, allocator)
 		defer if !success do delete(state.buffers)
+
+		alloc_info := vk.CommandBufferAllocateInfo{
+			sType = .COMMAND_BUFFER_ALLOCATE_INFO,
+			commandBufferCount = 1,
+			commandPool = state.pool,
+			level = .PRIMARY, 
+		}
+
+		result = vk.AllocateCommandBuffers(init_state.device.handle, &alloc_info, &state.buffers[0])
+		if result != .SUCCESS {
+			log.errorf("Command buffer allocation failure: %v", result)
+			return false
+		}
 
 		success = true
 	}
