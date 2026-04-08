@@ -49,10 +49,10 @@ engine_renderer_cleanup :: proc(state: ^Engine_Global_State, platform_context: r
 
 engine_poll_events :: proc(state: ^Engine_Global_State, platform_context: rawptr) -> (running: bool) {
 	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] {
-		if state == nil do log.panic("Expected a valid Engine state pointer, got: %v", state)
+		if state == nil do log.panicf("Expected a valid Engine state pointer, got: %v", state)
 		return glfw_poll_events(&state.window)
 	}
-	when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] && ODIN_PLATFORM_SUBTARGET != .Android do #panic(#procedure + " is not implemented for " + CONFIG_BUILD_TARGET + "target (" + ODIN_PLATFORM_SUBTARGET + ") subtarget")
+	else when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] && ODIN_PLATFORM_SUBTARGET != .Android do #panic(#procedure + " is not implemented for " + CONFIG_BUILD_TARGET + "target (" + ODIN_PLATFORM_SUBTARGET + ") subtarget")
 	else {
 		if platform_context == nil do log.panicf("Expected a vaild Android Engine state pointer, got: %v", platform_context)
 		return android_poll_events(cast(^Engine_Android_Global_State)platform_context)

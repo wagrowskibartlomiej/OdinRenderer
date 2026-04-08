@@ -1,10 +1,7 @@
 #+build linux
 package engine
 
-import "core:c"
-
 import android "./androidglue/ndkbindings"
-
 
 @export
 android_main :: proc "contextless" (android_app_state: ^android.android_app) {

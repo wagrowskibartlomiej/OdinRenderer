@@ -13,7 +13,7 @@ main :: proc () {
 	if !success do return
 
 	for {
-		running := engine_poll_events(nil, &engine_state)
+		running := engine_poll_events(&engine_state, nil)
 		running or_break
 
 		engine_process_input()
