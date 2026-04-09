@@ -12,7 +12,7 @@ for %%f in (*_android.odin) do (
 echo -------------------------------------------------------------------
 
 echo.
-echo ||| BUILDING |||
+echo ^|^|^| BUILDING ^|^|^|
 echo.
 
 odin build . ^
