@@ -8,12 +8,12 @@ main :: proc () {
 	context = engine_init(&engine_state)
 	defer engine_cleanup(&engine_state)
 
-	success := engine_renderer_init(&engine_state, nil)
-	defer engine_renderer_cleanup(&engine_state, nil)
+	success := engine_renderer_init(&engine_state)
+	defer engine_renderer_cleanup(&engine_state)
 	if !success do return
 
 	for {
-		running := engine_poll_events(&engine_state, nil)
+		running := engine_poll_events(&engine_state)
 		running or_break
 
 		engine_process_input()

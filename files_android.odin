@@ -38,21 +38,11 @@ Android_Asset_File_Data :: struct {
 	internal_offset, start_offset, end_offset: i64, // Used for using linux.read to prevent destroying AAsset global offset when ommiting AAsset Manager
 }
 
-Android_File_Impl_Flag :: enum {
-	Search_Assets,
-	Search_Internal_Storage,
-	Search_External_Storage,
-	Thread_Safe_APK,
-	Storage_Permision, // Storage permision granted by user if included in manifest, must be set by a caller
-}
-
-Android_File_Impl_Flags :: bit_set[Android_File_Impl_Flag]
-Android_Search_Everywhere_Not_Thread_Safe_Flags := Android_File_Impl_Flags{.Search_Assets, .Search_Internal_Storage, .Search_External_Storage}
-
-// Thread safe flag is only used for APK
-@(private="file")
-android_open :: proc(name: string, app: ^android.android_app, flags := os.File_Flags{.Read}, perm := os.Permissions_Default, open_options := Android_Search_Everywhere_Not_Thread_Safe_Flags) -> (f: ^os.File, err: os.Error) {
-	if app == nil do return nil, .ENXIO // I do not really now what error to return without extending os.Error and I'd want to avoid that
+// Thread safe flag is only used for APK, app pointer needs to be passed
+android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Permissions_Default, open_options := Android_Search_Everywhere_Not_Thread_Safe_Flags) -> (f: ^os.File, err: os.Error) {
+	state := get_android_global_state()
+	if state == nil || state.app_ptr == nil do return nil, .ENXIO // I do not really now what error to return without extending os.Error and I'd want to avoid that
+	app := state.app_ptr
 
 	arena, _ := runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	temp_alloc := runtime.arena_allocator(arena.arena)

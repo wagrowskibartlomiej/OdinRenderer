@@ -1,7 +1,7 @@
 #+feature using-stmt
 package engine
 
-import os "core:os/old"
+import "core:os"
 import "core:log"
 import "core:fmt"
 import "core:mem"
@@ -429,34 +429,34 @@ set_all_default_settings :: proc() {
 
 
 save_configuration :: proc() -> (success: bool) {
-	h, err := os.open(ENGINE_CONFIGURATION_FILE_NAME, os.O_CREATE | os.O_WRONLY | os.O_TRUNC, 0o644)
+	f, err := engine_open(ENGINE_CONFIGURATION_FILE_NAME, {.Create, .Trunc, .Write})
 	if err != nil {
 		log.errorf("Engine configuration save attempt failed: %v", err)
 		return false
 	}
-	defer os.close(h)
+	defer os.close(f)
 
 	current_offset: i64
 	conf := get_engine_configuration()
 
-	save_handle_options(h, &current_offset, conf.options)
-	save_handle_settings(h, &current_offset, conf.settings)
+	save_handle_options(f, &current_offset, conf.options)
+	save_handle_settings(f, &current_offset, conf.settings)
 
 	when CONFIG_VERBOSE_LOG do log.debugf("Saving of file '%v' successful", ENGINE_CONFIGURATION_FILE_NAME)
 	success = true
 	return
 }
 
-save_handle_settings :: proc(h: os.Handle, offset: ^i64, structure: any) {
+save_handle_settings :: proc(f: ^os.File, offset: ^i64, structure: any) {
 	for field in reflect.struct_fields_zipped(structure.id) {
 		config_tag := reflect.struct_tag_get(field.tag, CONFIG_TAG)
 
 		tag_b := transmute([]byte)config_tag
 
-		os.write_at(h, tag_b, offset^)
+		os.write_at(f, tag_b, offset^)
 		offset^ += i64(slice.size(tag_b))
 
-		os.write_at(h, CONFIG_FILE_SEPRATOR[:], offset^)
+		os.write_at(f, CONFIG_FILE_SEPRATOR[:], offset^)
 		offset^ += i64(slice.size(CONFIG_FILE_SEPRATOR[:]))
 
 		field_any := reflect.struct_field_value(structure, field)
@@ -465,28 +465,28 @@ save_handle_settings :: proc(h: os.Handle, offset: ^i64, structure: any) {
 		case int:
 			int_buff: [64]byte
 			integer_string_b := transmute([]byte) strconv.write_int(int_buff[:], i64(v), 10)
-			os.write_at(h, integer_string_b, offset^)
+			os.write_at(f, integer_string_b, offset^)
 			offset^ += i64(slice.size(integer_string_b))
 		case string:
 			string_b := transmute([]byte)v
-			os.write_at(h, string_b, offset^)
+			os.write_at(f, string_b, offset^)
 			offset^ += i64(slice.size(string_b))
 		case f32:
 			float_buff: [64]byte
 			float_string_b := transmute([]byte) strconv.write_float(float_buff[:], f64(v), 'G', -1, 32)
-			os.write_at(h, float_string_b, offset^)
+			os.write_at(f, float_string_b, offset^)
 			offset^ += i64(slice.size(float_string_b))
 		case:
-			os.write_at(h, UNDEFINED_CONFIG_VALUE[:], offset^)
+			os.write_at(f, UNDEFINED_CONFIG_VALUE[:], offset^)
 			offset^ += i64(slice.size(UNDEFINED_CONFIG_VALUE[:]))
 		}
 
-		os.write_at(h, CONFIG_FILE_NEW_LINE[:], offset^)
+		os.write_at(f, CONFIG_FILE_NEW_LINE[:], offset^)
 		offset^ += i64(slice.size(CONFIG_FILE_NEW_LINE[:]))
 	}
 }
 
-save_handle_options :: proc(h: os.Handle, offset: ^i64, structure: any) {
+save_handle_options :: proc(f: ^os.File, offset: ^i64, structure: any) {
 	for field in reflect.struct_fields_zipped(structure.id) {
 		info := unwrap_named_type(field.type)
 		field_value_any := reflect.struct_field_value(structure, field)
@@ -494,22 +494,22 @@ save_handle_options :: proc(h: os.Handle, offset: ^i64, structure: any) {
 		#partial switch &t in info.variant {
 		case runtime.Type_Info_Struct:
 			struct_type := get_engine_configuration_structure_type(field_value_any)
-			if struct_type == .Option || struct_type == .Option_Feature do save_handle_option(config_tag, h, offset, field_value_any)
-			else if struct_type == .Option_Flags || struct_type == .Option_Feature_Flags do save_handle_option_flags(h, offset, field_value_any)
-			else do save_handle_options(h, offset, field_value_any)
+			if struct_type == .Option || struct_type == .Option_Feature do save_handle_option(config_tag, f, offset, field_value_any)
+			else if struct_type == .Option_Flags || struct_type == .Option_Feature_Flags do save_handle_option_flags(f, offset, field_value_any)
+			else do save_handle_options(f, offset, field_value_any)
 		case runtime.Type_Info_Bit_Set: 
 			when CONFIG_BUILD_TARGET != Build_Variants[.Release] && CONFIG_VERBOSE_LOG do log.warnf("Using plain bit_set in options is not recommended")
-			save_handle_bit_set(info, &t, h, offset, field_value_any)
+			save_handle_bit_set(info, &t, f, offset, field_value_any)
 		case runtime.Type_Info_Enum: 
 			when CONFIG_BUILD_TARGET != Build_Variants[.Release] && CONFIG_VERBOSE_LOG do log.warnf("Using plain enum in options is not recommended")
-			save_handle_enum(info, &t, config_tag, h, offset, field_value_any)
+			save_handle_enum(info, &t, config_tag, f, offset, field_value_any)
 		case:
 		}
 
 	}
 }
 
-save_handle_option :: proc(tag: string, h: os.Handle, offset: ^i64, structure: any) {
+save_handle_option :: proc(tag: string, f: ^os.File, offset: ^i64, structure: any) {
 	if tag == "" do return
 
 	option_any := reflect.struct_field_value_by_name(structure, "option", allow_using = true)
@@ -535,19 +535,19 @@ save_handle_option :: proc(tag: string, h: os.Handle, offset: ^i64, structure: a
 	else do names = ((cast(^[^]string)names_any.data)^)[:len(enum_info.values)]
 
 	tag_b := transmute([]byte)tag
-	os.write_at(h, tag_b, offset^)
+	os.write_at(f, tag_b, offset^)
 	offset^ += i64(slice.size(tag_b))
 
-	os.write_at(h, CONFIG_FILE_SEPRATOR[:], offset^)
+	os.write_at(f, CONFIG_FILE_SEPRATOR[:], offset^)
 	offset^ += i64(len(CONFIG_FILE_SEPRATOR))
 
-	for v, i in enum_info.values do check_and_write_enum_from_rawptr(h, offset, option_any.data, base_enum_info.size, v, names[i])
+	for v, i in enum_info.values do check_and_write_enum_from_rawptr(f, offset, option_any.data, base_enum_info.size, v, names[i])
 
-	os.write_at(h, CONFIG_FILE_NEW_LINE[:], offset^)
+	os.write_at(f, CONFIG_FILE_NEW_LINE[:], offset^)
 	offset^ += i64(len(CONFIG_FILE_NEW_LINE))
 }
 
-save_handle_option_flags :: proc(h: os.Handle, offset: ^i64, structure: any) {
+save_handle_option_flags :: proc(f: ^os.File, offset: ^i64, structure: any) {
 	bits_any := reflect.struct_field_value_by_name(structure, "bits", allow_using = true)
 	if bits_any == nil {
 		log.errorf("Expected bits field in '%v' structure while saving, but it was not found", structure)
@@ -572,10 +572,10 @@ save_handle_option_flags :: proc(h: os.Handle, offset: ^i64, structure: any) {
 	for v, i in enum_info.values {
 		name_b := transmute([]byte)names[i]
 
-		os.write_at(h, name_b, offset^)
+		os.write_at(f, name_b, offset^)
 		offset^ += i64(slice.size(name_b))
 
-		os.write_at(h, CONFIG_FILE_SEPRATOR[:], offset^)
+		os.write_at(f, CONFIG_FILE_SEPRATOR[:], offset^)
 		offset^ += i64(slice.size(CONFIG_FILE_SEPRATOR[:]))
 
 		flag: []byte
@@ -583,15 +583,15 @@ save_handle_option_flags :: proc(h: os.Handle, offset: ^i64, structure: any) {
 		if value_in_bit_set_by_rawptr(v, bits_info.lower, bits_info.underlying.size, bits_any.data) do flag = transmute([]byte)OPTION_FLAG_TRUE_STRING
 		else do flag = transmute([]byte)OPTION_FLAG_FALSE_STRING
 
-		os.write_at(h, flag, offset^)
+		os.write_at(f, flag, offset^)
 		offset^ += i64(slice.size(flag))
 		
-		os.write_at(h, CONFIG_FILE_NEW_LINE[:], offset^)
+		os.write_at(f, CONFIG_FILE_NEW_LINE[:], offset^)
 		offset^ += i64(slice.size(CONFIG_FILE_NEW_LINE[:]))
 	}
 }
 
-save_handle_bit_set :: proc(info: ^runtime.Type_Info, bit_set_info: ^runtime.Type_Info_Bit_Set, h: os.Handle, offset: ^i64, _bit_set: any) {
+save_handle_bit_set :: proc(info: ^runtime.Type_Info, bit_set_info: ^runtime.Type_Info_Bit_Set, f: ^os.File, offset: ^i64, _bit_set: any) {
 	base_enum_info, success := unwrap_enum_from_named(bit_set_info.elem)
 	if !success do return
 
@@ -600,31 +600,31 @@ save_handle_bit_set :: proc(info: ^runtime.Type_Info, bit_set_info: ^runtime.Typ
 	for v, i in enum_info.values {
 	name := transmute([]byte)enum_info.names[i]
 
-	os.write_at(h, name, offset^)
+	os.write_at(f, name, offset^)
 	offset^ += i64(slice.size(name))
 
-	os.write_at(h, CONFIG_FILE_SEPRATOR[:], offset^)
+	os.write_at(f, CONFIG_FILE_SEPRATOR[:], offset^)
 	offset^ += i64(slice.size(CONFIG_FILE_SEPRATOR[:]))
 
 	flag: []byte
 	if value_in_bit_set_by_rawptr(v, bit_set_info.lower, info.size, _bit_set.data) do flag = transmute([]byte)OPTION_FLAG_TRUE_STRING
 	else do flag = transmute([]byte)OPTION_FLAG_FALSE_STRING
 
-	os.write_at(h, flag, offset^)
+	os.write_at(f, flag, offset^)
 	offset^ += i64(slice.size(flag))
 
-	os.write_at(h, CONFIG_FILE_NEW_LINE[:], offset^)
+	os.write_at(f, CONFIG_FILE_NEW_LINE[:], offset^)
 	offset^ += i64(slice.size(CONFIG_FILE_NEW_LINE[:]))
 	}
 }
 
-save_handle_enum :: proc(info: ^runtime.Type_Info, enum_info: ^runtime.Type_Info_Enum, tag: string, h: os.Handle, offset: ^i64, _enum: any) {
+save_handle_enum :: proc(info: ^runtime.Type_Info, enum_info: ^runtime.Type_Info_Enum, tag: string, f: ^os.File, offset: ^i64, _enum: any) {
 	tag_b := transmute([]byte)tag
 
-	os.write_at(h, tag_b, offset^)
+	os.write_at(f, tag_b, offset^)
 	offset^ += i64(slice.size(tag_b))
 
-	os.write_at(h, CONFIG_FILE_SEPRATOR[:], offset^)
+	os.write_at(f, CONFIG_FILE_SEPRATOR[:], offset^)
 	offset^ += i64(slice.size(CONFIG_FILE_SEPRATOR[:]))
 
 	val := cast_enum_value_to_i64(_enum.data, info.size)
@@ -633,24 +633,24 @@ save_handle_enum :: proc(info: ^runtime.Type_Info, enum_info: ^runtime.Type_Info
 		if val == i64(v) {
 		name := transmute([]byte)enum_info.names[i]
 
-		os.write_at(h, name, offset^)
+		os.write_at(f, name, offset^)
 		offset^ += i64(slice.size(name))
 
-		os.write_at(h, CONFIG_FILE_NEW_LINE[:], offset^)
+		os.write_at(f, CONFIG_FILE_NEW_LINE[:], offset^)
 		offset^ += i64(slice.size(CONFIG_FILE_NEW_LINE[:]))
 
 		return
 		}
 	}
 
-	os.write_at(h, UNDEFINED_CONFIG_VALUE[:], offset^)
+	os.write_at(f, UNDEFINED_CONFIG_VALUE[:], offset^)
 	offset^ += i64(slice.size(UNDEFINED_CONFIG_VALUE[:]))
 
-	os.write_at(h, CONFIG_FILE_NEW_LINE[:], offset^)
+	os.write_at(f, CONFIG_FILE_NEW_LINE[:], offset^)
 	offset^ += i64(slice.size(CONFIG_FILE_NEW_LINE[:]))
 }
 
-check_and_write_enum_from_rawptr :: proc(handle: os.Handle, offset: ^i64, data: rawptr, size: int, value: runtime.Type_Info_Enum_Value, to_write: string) {
+check_and_write_enum_from_rawptr :: proc(handle: ^os.File, offset: ^i64, data: rawptr, size: int, value: runtime.Type_Info_Enum_Value, to_write: string) {
 	bytes := transmute([]byte)to_write
 	val := i64(value)
 	enum_val := cast_enum_value_to_i64(data, size)
@@ -704,14 +704,14 @@ cast_enum_value_to_i64 :: proc(enum_ptr: rawptr, size: int) -> i64 {
 
 
 load_configuration :: proc(settings_string_allocator: runtime.Allocator, temp_allocator := context.temp_allocator) {
-	h, err := os.open(ENGINE_CONFIGURATION_FILE_NAME)
+	f, err := engine_open(ENGINE_CONFIGURATION_FILE_NAME)
 	if err != nil {
 		when CONFIG_BUILD_VARIANT != Build_Variants[.Release] do fmt.eprintfln("Failed to open '%v' file to read enigne configuration: %v", ENGINE_CONFIGURATION_FILE_NAME, err)
 		return
 	}
-	defer os.close(h)
+	defer os.close(f)
 
-	m := parse_engine_configuration_file(h, temp_allocator, temp_allocator)
+	m := parse_engine_configuration_file(f, temp_allocator, temp_allocator)
 	defer delete(m)
 
 	for k, v in m do load_value(k, v, settings_string_allocator)
@@ -721,7 +721,7 @@ load_configuration :: proc(settings_string_allocator: runtime.Allocator, temp_al
 	when CONFIG_VERBOSE_LOG do log.debugf("Loading of file '%v' successful", ENGINE_CONFIGURATION_FILE_NAME)
 }
 
-parse_engine_configuration_file :: proc(h: os.Handle, allocator := context.allocator, temp_allocator := context.temp_allocator) -> map[string]string {
+parse_engine_configuration_file :: proc(f: ^os.File, allocator := context.allocator, temp_allocator := context.temp_allocator) -> map[string]string {
 	/***************************************************
 		NOTE:
 		I don't really know at the moment how I want to handle some characters like: '\t' or '\r' etc.
@@ -729,8 +729,8 @@ parse_engine_configuration_file :: proc(h: os.Handle, allocator := context.alloc
 		but I don't want it to stay that way, so this code needs a revisit later on.
 	***************************************************/
 
-	data_b, success := os.read_entire_file_from_handle(h)
-	if !success do return nil
+	data_b, err := os.read_entire_file_from_file(f, context.allocator)
+	if err != nil do return nil
 	defer delete(data_b)
 
 	data := string(data_b[:]) // convert to string to iterate as rune for utf8 encoding

@@ -5,15 +5,14 @@ import "core:log"
 import android "androidglue/ndkbindings"
 
 // Retrieves an ANatvieWindow handle. Prefer `create_window`.
-retrieve_android_window :: proc(window: ^Window_State, app: rawptr) -> (success: bool) { 
+retrieve_android_window :: proc(window: ^Window_State) -> (success: bool) { 
+	app := get_android_global_state().app_ptr.window
 	if app == nil {
 		log.errorf("ANatvieWindow was nil, when expected a valid pointer")
 		return false
 	}
-
-	ptr := cast(^android.ANativeWindow)app
-
-	window.handle = ptr
+	
+	window.handle = app
 	when CONFIG_VERBOSE_LOG do log.debug("Android window handle retrieved")
 	return true
 }

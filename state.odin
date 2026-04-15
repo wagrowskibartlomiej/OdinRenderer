@@ -11,10 +11,11 @@ DEFAULT_LOGGER_OPTIONS := log.Options{.Level,.Terminal_Color,.Thread_Id}
 DEFAULT_LOGGER_IDENT := "ENGINE"
 
 Engine_Global_State :: struct {
-	app_context: Context_State,
-	assets: Assets_State,
+	app_context: Context_State, // user_ptr in context is pointing to the state
+	assets: Assets_Manager,
 	window: Window_State,
 	renderer: Renderer_State,
+	platform_context,
 	user_data: rawptr,
 }
 
@@ -75,6 +76,7 @@ Engine_Cleanup_Context_Proc :: #type proc(context_state: ^Context_State, procs: 
 engine_create_default_context : Engine_Create_Context_Proc : proc "contextless" (engine_state: ^Engine_Global_State, procs: Context_State_Create_Procs = {}, data: rawptr = nil) {
 	engine_state.app_context.ctx = runtime.default_context()
 	context = engine_state.app_context.ctx
+	engine_state.app_context.ctx.user_ptr = engine_state
 
 	procs := set_default_context_create_procs(procs)
 
@@ -176,4 +178,9 @@ change_logger_ident :: proc(new_ident: string, state: ^Context_State) {
 		d := cast(^log.File_Console_Logger_Data)state.ctx.logger.data
 		d.ident = new_ident
 	} else do #panic(#procedure + " is not implemented for " + CONFIG_BUILD_TARGET + " target (" + ODIN_PLATFORM_SUBTARGET + " subtarget)")
+}
+
+get_global_state :: proc() -> ^Engine_Global_State {
+	if context.user_ptr == nil do return nil
+	return cast(^Engine_Global_State)context.user_ptr 
 }

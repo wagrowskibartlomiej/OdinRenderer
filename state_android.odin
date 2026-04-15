@@ -32,6 +32,7 @@ engine_init_android :: proc "contextless" (android_app_state: ^android.android_a
 	engine_state.cmd_proc = handle_android_cmd
 	engine_state.input_proc = handle_android_input
 	engine_state.app_ptr = android_app_state
+	engine_state.platform_context = engine_state
 
 	android_app_state.userData = engine_state
 	android_app_state.onAppCmd = engine_state.cmd_proc
@@ -103,7 +104,7 @@ handle_android_cmd : Proc_Handle_Anroid_CMD : proc "c" (app: ^android.android_ap
 	#partial switch cmd {
 	case .INIT_WINDOW: state.window_ready = true
 	case .TERM_WINDOW:
-		engine_renderer_cleanup(state, state.app_ptr) // for now just recreate all, we'll move to swapchain recreation later
+		engine_renderer_cleanup(state) // for now just recreate all, we'll move to swapchain recreation later
 		state.window_ready = false
 		state.recreate_swapchain = true
 	case .GAINED_FOCUS: state.app_active = true
@@ -115,4 +116,13 @@ handle_android_cmd : Proc_Handle_Anroid_CMD : proc "c" (app: ^android.android_ap
 
 handle_android_input : Proc_Handle_Android_Input : proc "c" (app: ^android.android_app, event: ^android.AInputEvent) -> c.int32_t {
 	return 0
+}
+
+get_android_global_state :: proc() -> ^Engine_Android_Global_State {
+	if context.user_ptr == nil do return nil
+
+	global := cast(^Engine_Global_State)context.user_ptr
+	if global.platform_context == nil do return nil
+
+	return cast(^Engine_Android_Global_State)global.platform_context
 }

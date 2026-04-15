@@ -113,24 +113,24 @@ cleanup_renderer_passes :: proc(state: ^Vulkan_Init_State, callbacks := VULKAN_G
 	unset_resource_flag(&state.resource_flags, Vulkan_Init_Resource_Flag.Render_Passes)
 }
 
-create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, assets_state: ^Assets_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
+create_graphics_pipelines :: proc(state: ^Vulkan_Init_State, assets: ^Assets_Manager, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
 	if .Pipelines in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Init_Resource_Flag.Pipelines)
 
-	v, vertex_present := get_asset_memory(assets_state, .Shader, "default_vertex.spv", "spirv")
+	v, vertex_present := get_asset("default_vertex.spv", "spirv", .SPIRV, assets)
 	if !vertex_present {
 		log.error("Cannot create graphics pipelines: Missing vertex shader memory in assets pool")
 		return
 	}
 
 
-	f, fragment_present := get_asset_memory(assets_state, .Shader, "default_fragment.spv", "spirv")
+	f, fragment_present := get_asset("default_fragment.spv", "spirv", .SPIRV, assets)
 	if !fragment_present {
 		log.error("Cannot create graphics pipelines: Missing fragment shader memory in assets pool")
 		return
 	}
 
-	vertex, _ := v.([]u32)
-	fragment, _ := f.([]u32)
+	vertex := v.memory.spirv
+	fragment := f.memory.spirv
 
 	vertex_shader_create_info := vk.ShaderModuleCreateInfo{
 		sType = .SHADER_MODULE_CREATE_INFO,

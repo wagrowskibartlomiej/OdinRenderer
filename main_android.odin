@@ -11,14 +11,14 @@ android_main :: proc "contextless" (android_app_state: ^android.android_app) {
 	defer engine_cleanup_android(&engine_state)
 
 	engine_state.recreate_swapchain = true //TODO: TEMP SOLUTION IT CURRENTLY DESTROYS WHOLE RENDERER STATE
-	defer engine_renderer_cleanup(&engine_state, android_app_state)
+	defer engine_renderer_cleanup(&engine_state)
 
 	for {
-		running := engine_poll_events(nil, &engine_state)
+		running := engine_poll_events(&engine_state)
 		running or_break
 
 		if engine_state.window_ready && engine_state.recreate_swapchain {
-			success := engine_renderer_init(&engine_state, android_app_state)
+			success := engine_renderer_init(&engine_state)
 			if !success do return
 			engine_state.recreate_swapchain = false
 		}
