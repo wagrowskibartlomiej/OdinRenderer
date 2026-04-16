@@ -21,13 +21,14 @@ engine_init :: proc "contextless" (state: ^Engine_Global_State, procs := Engine_
 }
 
 engine_cleanup :: proc(state: ^Engine_Global_State, procs := Engine_State_Cleanup_Procs{}) {
-	when CONFIG_BUILD_TARGET == Build_Variants[.Editor] {
+	when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] {
 		success := build_asset_packed(&state.assets)
-		log.error("Building assets file failed")
+		if !success do log.error("Building assets file failed")
 	}
 	cleanup_asset_manager(&state.assets)
 	cleanup_engine_configuration()
 	cleanup_engine_state(state, procs)
+	//free_all(context.temp_allocator)
 }
 
 engine_renderer_init :: proc(state: ^Engine_Global_State) -> (success: bool) {

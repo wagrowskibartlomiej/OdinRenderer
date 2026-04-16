@@ -52,7 +52,7 @@ build_framebuffers_swapchain :: proc(init_state: ^Vulkan_Init_State, allocator :
 		if result != .SUCCESS {
 			log.errorf("Swapchain framebuffer creation failure: %v", result)
 			return false
-		}
+		} else do success = true
 	}
 
 	when CONFIG_VERBOSE_LOG do log.debug("Framebuffers for swapchain created")

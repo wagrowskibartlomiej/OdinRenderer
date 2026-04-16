@@ -12,7 +12,7 @@ main :: proc () {
 	defer engine_renderer_cleanup(&engine_state)
 	if !success do return
 
-	for {
+	for i in 0 ..< 1 {
 		running := engine_poll_events(&engine_state)
 		running or_break
 

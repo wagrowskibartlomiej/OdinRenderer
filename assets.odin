@@ -136,16 +136,8 @@ initialize_asset_manager :: proc(assets_manager: ^Assets_Manager, asset_file := 
 	return true
 }
 cleanup_asset_manager :: proc(assets_manager: ^Assets_Manager) {
-	for _, ass in assets_manager.resources {
-		if .Loaded_RAM in ass.flags {
-			switch ass.file_type {
-			case .SPIRV: delete(ass.memory.spirv, assets_manager.asset_allocator)
-			case .UNRECOGNIZED: delete(ass.memory.regular, assets_manager.asset_allocator)
-			}
-		}
-	}
+	for _, &ass in assets_manager.resources do cleanup_asset(&ass, assets_manager, destroy_key = false)
 	delete(assets_manager.resources)
-
 
 	mem.dynamic_arena_destroy(&assets_manager._strings_arena.handle)
 	assets_manager._strings_arena.allocator = runtime.nil_allocator() // just to be safe I guess
@@ -378,7 +370,10 @@ _descriptor_to_asset :: proc(desc: ^Asset_Packed_Descriptor, ass: ^Asset) {
 _asset_to_descriptor :: proc(ass: ^Asset, desc: ^Asset_Packed_Descriptor) -> (success: bool) {
 	if len(ass.name) > MAX_ASSET_NAME_LEN || len(ass.pkg) > MAX_ASSET_PKG_LEN do return
 	desc.data_offset = auto_cast ass.file_offset
-	desc.data_size = auto_cast ass.file_size
+	switch ass.file_type {
+		case .UNRECOGNIZED: desc.data_size = auto_cast ass.file_size
+		case .SPIRV: desc.data_size = auto_cast (ass.file_size * 4) // it holds []u32 so we need to multiply it for bytes
+	}
 	desc.file_type = auto_cast ass.file_type
 	desc.asset_type = auto_cast ass.type
 	desc.name_count =  auto_cast copy(desc.name_bytes[:], transmute([]byte)ass.name)
@@ -391,7 +386,7 @@ _asset_to_descriptor :: proc(ass: ^Asset, desc: ^Asset_Packed_Descriptor) -> (su
 build_asset_packed :: proc(manager: ^Assets_Manager) -> (success: bool) {
 	// If not opened, create/open
 	if manager.assets_file == nil {
-		f, err := engine_open(ASSET_FILE_NAME, {.Write, .Create, .Trunc})
+		f, err := engine_open(ASSET_FILE_NAME, {.Write, .Create, .Trunc}, os.Permissions_Read_Write_All)
 		if err != nil {
 			log.errorf("Opening '%v' for building failure: %v", ASSET_FILE_NAME, err)
 			return false
@@ -412,13 +407,14 @@ build_asset_packed :: proc(manager: ^Assets_Manager) -> (success: bool) {
 	os.write_at(manager.assets_file, slice.bytes_from_ptr(&count, size_of(count)), map_start_offset)
 
 	map_start_offset += i64(size_of(count))
+	map_offset_counter = map_start_offset
 
 	// calculate binary data offset
 	binary_data_start_offset = map_start_offset + (size_of(descriptor) * i64(count))
 	binary_data_offset_counter = binary_data_start_offset
 	// TODO: Set up assets_tracker.temp file for tracking which one to add when building assets.packed
 
-	for _, ass in manager.resources {
+	for _, &ass in manager.resources {
 		if .Loaded_RAM not_in ass.flags {
 			log.warnf("Asset '%v:%v' does not have loaded memory, cannot write it into '%v' (SKIPPING)", ass.pkg, ass.name, ASSET_FILE_NAME)
 			continue
@@ -432,18 +428,13 @@ build_asset_packed :: proc(manager: ^Assets_Manager) -> (success: bool) {
 			continue
 		}
 
-		descriptor.asset_type  = cast(type_of(descriptor.asset_type))	ass.type
-		descriptor.file_type   = cast(type_of(descriptor.file_type))	ass.file_type
-		descriptor.data_size   = cast(type_of(descriptor.data_size))	len(ass.memory.regular)
-		descriptor.data_offset = cast(type_of(descriptor.data_offset))	binary_data_start_offset
-		descriptor.name_count  = cast(type_of(descriptor.name_count))	len(ass.name)
-		descriptor.pkg_count   = cast(type_of(descriptor.pkg_count))	len(ass.pkg)
+		_asset_to_descriptor(&ass, &descriptor) or_continue
 
-		name_bytes_offset := map_start_offset + i64(offset_of(descriptor.name_bytes))
-		pkg_bytes_offset := map_start_offset + i64(offset_of(descriptor.pkg_bytes))
+		name_bytes_offset := map_offset_counter + i64(offset_of(descriptor.name_bytes))
+		pkg_bytes_offset := map_offset_counter + i64(offset_of(descriptor.pkg_bytes))
 		// write all the data 
 		os.write_at(manager.assets_file, slice.bytes_from_ptr(&descriptor, size_of(descriptor)), map_offset_counter)
-		map_start_offset += size_of(descriptor)
+		map_offset_counter += size_of(descriptor)
 
 		// write the remaning strings data
 		os.write_at(manager.assets_file, transmute([]byte)ass.name, name_bytes_offset)
@@ -530,15 +521,17 @@ read_asset_file :: proc(file: string, manager: ^Assets_Manager, load_data := fal
 
 	return nil
 }
-// Unloads asset, frees all allocated memory and destroys entry in resource map
+// Unloads asset, frees all allocated memory and destroys entry in resource map if specified
 // NOTE: Asset's `file type` should be set before calling to ensure proper cleanup
-cleanup_asset :: proc(asset: ^Asset, manager: ^Assets_Manager) {
+cleanup_asset :: proc(asset: ^Asset, manager: ^Assets_Manager, destroy_key: bool) {
 	unload_asset_memory(asset, manager)
 
 	if asset._internal_metadata != nil {
-		free(asset._internal_metadata, manager.allocator) 
 		err := os.close(asset._internal_metadata.source)
-		if err != nil do log.errorf("Asset '%v:%v' file closing failure: %v", asset.pkg, asset.name, err)
+		if err != nil do log.errorf("Asset file closing failure: %v", err)
+
+		// Free despite not closing, I don't think there is much to do if something like this happens
+		free_err := free(asset._internal_metadata, manager.allocator) 
 	}
 	
 	id, ok := get_asset_id(asset.name, asset.pkg, asset.file_type, manager.hash_state)
@@ -546,7 +539,7 @@ cleanup_asset :: proc(asset: ^Asset, manager: ^Assets_Manager) {
 		log.errorf("Asset '%v:%v' ID retrieval failed, unable to delete entry from resource map", asset.pkg, asset.name)
 		return
 	}
-	delete_key(&manager.resources, id)
+	if destroy_key do delete_key(&manager.resources, id)
 }
 // Loads asset memory from assets.packed file with assets allocator
 // NOTE: Asset's `file type` should be set before calling to ensure proper loading
@@ -614,7 +607,7 @@ find_if_asset_exists_by_data :: proc(name, pkg: string, type: Asset_File_Type, m
 	return find_if_asset_exists_by_id(id, manager)
 }
 
-read_assets_dir_recursive :: proc(manager: ^Assets_Manager, dir_name := DEFAULT_ASSETS_DIR_NAME, allocator := context.allocator, load_assets_mem := false) -> (success: bool) {
+read_assets_dir_recursive :: proc(manager: ^Assets_Manager, dir_name := DEFAULT_ASSETS_DIR_NAME, allocator := context.temp_allocator, load_assets_mem := false) -> (success: bool) {
 	d, err := engine_open(dir_name, nil)
 
 	if err != nil {
@@ -630,6 +623,9 @@ read_assets_dir_recursive :: proc(manager: ^Assets_Manager, dir_name := DEFAULT_
 		log.errorf("Reading '%v' directory failure: %v", dir_name, dir_err)
 		return false
 	}
+	// in case someone passes other allocator? (maybe temp one wouldn't be sufficient?)
+	defer for i in infos do os.file_info_delete(i, allocator)
+	defer delete(infos, allocator) 
 
 	for i in infos {
 		#partial switch i.type {
