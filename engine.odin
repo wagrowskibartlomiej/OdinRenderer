@@ -4,8 +4,7 @@ import "base:runtime"
 import "core:log"
 
 engine_init :: proc "contextless" (state: ^Engine_Global_State, procs := Engine_State_Create_Procs{}) -> (ctx: runtime.Context) {
-	setup_engine_state(state, procs)
-	context = state.app_context.ctx
+	context = setup_engine_state(state, procs)
 
 	initialize_engine_configuration()
 	load_configuration(get_engine_configuration()._settings_strings_arena.allocator)
@@ -17,7 +16,7 @@ engine_init :: proc "contextless" (state: ^Engine_Global_State, procs := Engine_
 		if !success do log.panicf("Unable to continue without assets")
 	} else do read_assets_packed(state.assets.assets_file, &state.assets, true)
 
-	return state.app_context.ctx
+	return context
 }
 
 engine_cleanup :: proc(state: ^Engine_Global_State, procs := Engine_State_Cleanup_Procs{}) {

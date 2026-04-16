@@ -13,6 +13,7 @@ import "core:time"
 import "core:strconv"
 import "core:strings"
 import "core:fmt"
+import "core:log"
 import fp "core:path/filepath"
 
 import android "androidglue/ndkbindings"
@@ -40,6 +41,10 @@ Android_Asset_File_Data :: struct {
 
 // Thread safe flag is only used for APK, app pointer needs to be passed
 android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Permissions_Default, open_options := Android_Search_Everywhere_Not_Thread_Safe_Flags) -> (f: ^os.File, err: os.Error) {
+	// Maybe if unsuporrted flags && only search asset return early? idk maybe let open it cause android proc will just return unsupported and let use the file in other ways?
+	//if (.Write in flags || .Create in flags || .Trunc in flags || .Excl in flags || .Append in flags)\
+	//&& Android_File_Impl_Flags{.Search_Assets} & open_options == Android_File_Impl_Flags{.Serach_Assets} {}
+
 	state := get_android_global_state()
 	if state == nil || state.app_ptr == nil do return nil, .ENXIO // I do not really now what error to return without extending os.Error and I'd want to avoid that
 	app := state.app_ptr
@@ -80,33 +85,41 @@ android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Per
 	if .Inheritable in flags   { sys_flags -= {.CLOEXEC} }
 
 	builder := strings.builder_make(temp_alloc)
+	defer strings.builder_destroy(&builder) // if any other temp allocator would be used then maybe?
 
 	if .Search_Internal_Storage in open_options {
 		p := app.activity.internalDataPath
-		base := fp.base(name)
-		final_path := fmt.sbprintf(&builder, "%v/%v", p, base) 
-		cpath := strings.unsafe_to_cstring(&builder)
-		fd, open_err := linux.open(cpath, sys_flags, transmute(linux.Mode)transmute(u32)perm)
-		// if we found file
-		if open_err == nil {
-			f, err = android_new_file_storage(fd, name, 0, 0, app, nil, open_options, runtime.heap_allocator())
-			if err == nil do return
-		} else do err = _get_platform_error(open_err) // assign error to return if we won't be searching in external storage
-		strings.builder_reset(&builder)
+		return _handle_storage_file_opening_internal(name, p, &builder, sys_flags, perm, open_options, app)
 	}
 
 	if .Search_External_Storage in open_options {
-		p := app.activity.internalDataPath
-		base := fp.base(name)
-		final_path := fmt.sbprintf(&builder, "%v/%v", p, base)
+		p := app.activity.externalDataPath
+		return _handle_storage_file_opening_internal(name, p, &builder, sys_flags, perm, open_options, app)
 	}
 
 	return
 }
 
 @(private="file")
+_handle_storage_file_opening_internal :: proc(name: string, path: cstring, builder: ^strings.Builder, sys_flags: linux.Open_Flags, perm: os.Permissions, open_options: Android_File_Impl_Flags, app: ^android.android_app) -> (f: ^os.File, err: os.Error) {
+	base := fp.base(name)
+	final_path := fmt.sbprintf(builder, "%v/%v", path, base) 
+	cpath := strings.unsafe_to_cstring(builder)
+	fd, open_err := linux.open(cpath, sys_flags, transmute(linux.Mode)transmute(u32)perm)
+	// if we found file
+	if open_err == nil {
+		f, err = android_new_file_storage(fd, name, 0, 0, app, nil, open_options, runtime.heap_allocator())
+		if err == nil do return
+	} else do err = _get_platform_error(open_err) // assign error to return if we won't be searching in external storage
+	strings.builder_reset(builder)
+
+	return
+}
+
+@(private="file")
 android_file_proc : os.File_Stream_Proc : proc(stream_data: rawptr, mode: os.File_Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From, allocator: runtime.Allocator) -> (n: i64, err: os.Error) {
-	data := cast(^Android_File_Impl)stream_data
+	file := cast(^os.File)stream_data
+	data := cast(^Android_File_Impl)file.impl
 
 	// If in APK there will be asset_data (it can be either asset opened with manager or descriptor)
 	if data.asset_data != nil do return android_handle_assets_proc(data, mode, p, offset, whence, allocator)

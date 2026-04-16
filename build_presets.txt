@@ -1,5 +1,5 @@
-# NAME:TARGET:VARIANT:VERBOSE:TRACKING:CUSTOM_FLAGS
-DESKTOP-RELEASE:PC:RELEASE:false:false:-o:aggressive
-DESKTOP-DEBUG:PC:EDITOR:true:true:-debug -o:none
-ANDROID-RELEASE:MOBILE:RELEASE:false:false:-o:aggressive
-ANDROID-DEBUG:MOBILE:RELEASE:true:true:-debug -show-system-calls
+# NAME            : TARGET : VARIANT : VERBOSE : TRACKING : APK-DEBUG : CUSTOM_FLAGS
+DESKTOP-RELEASE   : PC     : RELEASE : false   : false    : false     : -o:aggressive
+DESKTOP-DEBUG     : PC     : EDITOR  : true    : true     : false     : -debug -o:none
+ANDROID-RELEASE   : MOBILE : RELEASE : false   : false    : false     : -o:aggressive
+ANDROID-DEBUG     : MOBILE : RELEASE : true    : true     : true      : -debug -show-system-calls

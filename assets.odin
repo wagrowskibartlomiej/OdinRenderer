@@ -209,17 +209,15 @@ read_assets_packed :: proc(assets_file: ^os.File, manager: ^Assets_Manager, load
 
 	descriptor: Asset_Packed_Descriptor
 	_count_file: Total_Assets_Count
-	asset: Asset
 
 	// move to the count
-	map_start_offset += i64(len(ASSET_FILE_NAME))
+	map_start_offset += i64(len(ASSET_FILE_HEADER))
 
 	// read the count
 	os.read_at(assets_file, slice.bytes_from_ptr(&_count_file, size_of(_count_file)), map_start_offset)
 	map_start_offset += i64(size_of(_count_file))
 
 	count := i64(_count_file) // assing to platform's natural endian
-
 
 	// we're gonna set resource map cap into te total asset count
 	err := reserve_map(&manager.resources, count)
@@ -228,7 +226,9 @@ read_assets_packed :: proc(assets_file: ^os.File, manager: ^Assets_Manager, load
 	// assign counter 
 	map_offset_counter = map_start_offset
 
+	if count == 0 do log.debug("Asset count read from file is 0")
 	for i in 0 ..< count {
+		asset: Asset
 		os.read_at(assets_file, slice.bytes_from_ptr(&descriptor, size_of(descriptor)), map_offset_counter)
 
 		asset.file_offset = i64(descriptor.data_offset)
@@ -273,6 +273,7 @@ read_assets_packed :: proc(assets_file: ^os.File, manager: ^Assets_Manager, load
 
 		manager.resources[id] = asset
 		when CONFIG_VERBOSE_LOG do log.debugf("Added asset '%v:%v' (ID: %v)  to resources map", asset.pkg, asset.name, id)
+		map_offset_counter += size_of(Asset_Packed_Descriptor)
 	}
 }
 find_asset_in_packed :: proc{
@@ -367,12 +368,12 @@ _descriptor_to_asset :: proc(desc: ^Asset_Packed_Descriptor, ass: ^Asset) {
 }
 // Can fail if assets name/pkg is larger than descriptor buffers size (uses copy to move string data into descriptor bytes arrays)
 @(private="file")
-_asset_to_descriptor :: proc(ass: ^Asset, desc: ^Asset_Packed_Descriptor) -> (success: bool) {
+_asset_to_descriptor :: proc(file_offset: i64, ass: ^Asset, desc: ^Asset_Packed_Descriptor) -> (success: bool) {
 	if len(ass.name) > MAX_ASSET_NAME_LEN || len(ass.pkg) > MAX_ASSET_PKG_LEN do return
-	desc.data_offset = auto_cast ass.file_offset
+	desc.data_offset = auto_cast file_offset
 	switch ass.file_type {
-		case .UNRECOGNIZED: desc.data_size = auto_cast ass.file_size
-		case .SPIRV: desc.data_size = auto_cast (ass.file_size * 4) // it holds []u32 so we need to multiply it for bytes
+		case .UNRECOGNIZED: desc.data_size = auto_cast len(ass.memory.regular)
+		case .SPIRV: desc.data_size = auto_cast slice.size(ass.memory.spirv) // it holds []u32 so we need to multiply it for bytes
 	}
 	desc.file_type = auto_cast ass.file_type
 	desc.asset_type = auto_cast ass.type
@@ -428,7 +429,7 @@ build_asset_packed :: proc(manager: ^Assets_Manager) -> (success: bool) {
 			continue
 		}
 
-		_asset_to_descriptor(&ass, &descriptor) or_continue
+		_asset_to_descriptor(binary_data_offset_counter, &ass, &descriptor) or_continue
 
 		name_bytes_offset := map_offset_counter + i64(offset_of(descriptor.name_bytes))
 		pkg_bytes_offset := map_offset_counter + i64(offset_of(descriptor.pkg_bytes))
@@ -441,8 +442,9 @@ build_asset_packed :: proc(manager: ^Assets_Manager) -> (success: bool) {
 		os.write_at(manager.assets_file, transmute([]byte)ass.pkg, pkg_bytes_offset)
 
 		// write the memory of asset
-		os.write_at(manager.assets_file, ass.memory.regular, binary_data_offset_counter)
-		binary_data_offset_counter += i64(len(ass.memory.regular))
+		data := (raw_data(ass.memory.regular))[:descriptor.data_size]
+		os.write_at(manager.assets_file, data , binary_data_offset_counter)
+		binary_data_offset_counter += i64(len(data))
 
 		when CONFIG_VERBOSE_LOG do log.debugf("Written asset '%v:%v' into '%v' successfully", ass.pkg, ass.name, ASSET_FILE_NAME)
 	}

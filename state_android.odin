@@ -16,19 +16,25 @@ Proc_Handle_Android_Input :: #type proc "system" (app: ^android.android_app, eve
 Engine_Android_Global_State :: struct {
 	using _: Engine_Global_State,
 	app_ptr: ^android.android_app,
-	window_ready, app_active, recreate_swapchain: bool,
 	cmd_proc: Proc_Handle_Anroid_CMD,
 	input_proc: Proc_Handle_Android_Input,
+	flags: Engine_Android_Flags,
 }
+
+Engine_Android_Flag :: enum {
+	Engine_Initalized,
+	Rendering_Ready,
+	Focus,
+}
+Engine_Android_Flags :: bit_set[Engine_Android_Flag]
 
 Android_Logger_Data :: struct {
 	scratch: mem.Scratch_Allocator,
 	allocator: mem.Allocator,
 	ident: cstring,
 }
-
-// Wrapper for `engine_init` to set values for android like Android's CMD callback etc.
-engine_init_android :: proc "contextless" (android_app_state: ^android.android_app, engine_state: ^Engine_Android_Global_State, procs := Engine_State_Create_Procs{ctx = {create_logger = create_android_logger, assert_proc = android_assert_proc}}) -> runtime.Context {
+// Called first at android entry point to assign all pointers and context with pointer to global state
+init_android_state :: proc "c" (android_app_state: ^android.android_app, engine_state: ^Engine_Android_Global_State) -> runtime.Context {
 	engine_state.cmd_proc = handle_android_cmd
 	engine_state.input_proc = handle_android_input
 	engine_state.app_ptr = android_app_state
@@ -38,6 +44,14 @@ engine_init_android :: proc "contextless" (android_app_state: ^android.android_a
 	android_app_state.onAppCmd = engine_state.cmd_proc
 	android_app_state.onInputEvent = engine_state.input_proc
 
+	// We need access to global state
+	context = {user_ptr = engine_state}
+	engine_state.app_context.ctx = context
+	return context
+}
+
+// Wrapper for `engine_init` to set values for android like Android's CMD callback etc.
+engine_init_android :: proc "contextless" (android_app_state: ^android.android_app, engine_state: ^Engine_Android_Global_State, procs := Engine_State_Create_Procs{ctx = {create_logger = create_android_logger, assert_proc = android_assert_proc}}) -> runtime.Context {
 	return engine_init(engine_state, procs)
 }
 
@@ -97,22 +111,6 @@ android_assert_proc : runtime.Assertion_Failure_Proc : proc(prefix, message: str
 	runtime.trap()
 }
 
-handle_android_cmd : Proc_Handle_Anroid_CMD : proc "c" (app: ^android.android_app, cmd: android.AppCmd) {
-	state := cast(^Engine_Android_Global_State)app.userData
-	context = state.app_context.ctx
-
-	#partial switch cmd {
-	case .INIT_WINDOW: state.window_ready = true
-	case .TERM_WINDOW:
-		engine_renderer_cleanup(state) // for now just recreate all, we'll move to swapchain recreation later
-		state.window_ready = false
-		state.recreate_swapchain = true
-	case .GAINED_FOCUS: state.app_active = true
-	case .LOST_FOCUS: state.app_active = false
-	case .WINDOW_RESIZED: state.recreate_swapchain = true
-	case: log.warnf("Unhandled android CMD: %v", cmd)
-	}
-}
 
 handle_android_input : Proc_Handle_Android_Input : proc "c" (app: ^android.android_app, event: ^android.AInputEvent) -> c.int32_t {
 	return 0

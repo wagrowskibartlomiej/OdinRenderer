@@ -58,8 +58,9 @@ Tracking_Allocator_Data :: struct {
 	tracking: mem.Tracking_Allocator,
 }
 
-setup_engine_state :: proc "contextless" (engine_state: ^Engine_Global_State, procs: Engine_State_Create_Procs = {}) {
+setup_engine_state :: proc "contextless" (engine_state: ^Engine_Global_State, procs: Engine_State_Create_Procs = {}) -> runtime.Context {
 	engine_create_default_context(engine_state, procs.ctx, procs.ctx_data)
+	return engine_state.app_context.ctx
 }
 
 cleanup_engine_state :: proc(state: ^Engine_Global_State, procs: Engine_State_Cleanup_Procs = {}) {
@@ -75,8 +76,11 @@ Engine_Cleanup_Context_Proc :: #type proc(context_state: ^Context_State, procs: 
 
 engine_create_default_context : Engine_Create_Context_Proc : proc "contextless" (engine_state: ^Engine_Global_State, procs: Context_State_Create_Procs = {}, data: rawptr = nil) {
 	engine_state.app_context.ctx = runtime.default_context()
-	context = engine_state.app_context.ctx
+
+	// Set pointer in context
 	engine_state.app_context.ctx.user_ptr = engine_state
+
+	context = engine_state.app_context.ctx
 
 	procs := set_default_context_create_procs(procs)
 
@@ -92,9 +96,6 @@ engine_create_default_context : Engine_Create_Context_Proc : proc "contextless" 
 
 	engine_state.app_context.ctx.logger = procs.create_logger(allocator = engine_state.app_context.ctx.allocator, data = procs.logger_data)
 	set_resource_flag(&engine_state.app_context.resource_flags, Context_Resource_Flag.Logger)
-
-	// Set pointer in context
-	engine_state.app_context.ctx.user_ptr = engine_state
 }
 
 engine_cleanup_default_context : Engine_Cleanup_Context_Proc : proc(context_state: ^Context_State, procs: Context_State_Cleanup_Procs = {}, data: rawptr = nil) {
