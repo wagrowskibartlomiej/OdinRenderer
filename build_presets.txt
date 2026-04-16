@@ -1,0 +1,5 @@
+# NAME:TARGET:VARIANT:VERBOSE:TRACKING:CUSTOM_FLAGS
+DESKTOP-RELEASE:PC:RELEASE:false:false:-o:aggressive
+DESKTOP-DEBUG:PC:EDITOR:true:true:-debug -o:none
+ANDROID-RELEASE:MOBILE:RELEASE:false:false:-o:aggressive
+ANDROID-DEBUG:MOBILE:RELEASE:true:true:-debug -show-system-calls
