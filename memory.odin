@@ -9,6 +9,7 @@ import sa "core:container/small_array"
 import vk "vendor:vulkan"
 
 ALLOCATE_RESOURCES_CAPACITY :: 16
+MAX_GPU_MEMORY_MANAGER_BLOCK_ALLOCATION : vk.DeviceSize : mem.Gigabyte * 2
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
@@ -300,10 +301,10 @@ NOTE:
 TODO:
 	For now just use this, but in future add check for VK_EXT_memory_budget and use it if available with dedicated procedure
 */
-vulkan_allocate_relaxed :: proc(memory: ^vk.DeviceMemory, init_state: ^Vulkan_Init_State, mem_index: int, size: vk.DeviceSize, min : vk.DeviceSize = 64 * mem.Megabyte, lower_by_percent: f64 = 0.1, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool, allocated_size: vk.DeviceSize) {
-	if init_state == nil || memory == nil || size < min || mem_index < 0 || lower_by_percent <= 0 do return
-
+vulkan_allocate_relaxed :: proc(memory: ^vk.DeviceMemory, init_state: ^Vulkan_Init_State, mem_index: int, size: vk.DeviceSize, minimum : vk.DeviceSize = 64 * mem.Megabyte, lower_by_percent: f64 = 0.1, maximum := MAX_GPU_MEMORY_MANAGER_BLOCK_ALLOCATION, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool, allocated_size: vk.DeviceSize) {
+	if init_state == nil || memory == nil || size < minimum || mem_index < 0 || lower_by_percent <= 0 do return
 	i := u32(mem_index)
+	size := vk.DeviceSize(min(u64(size), u64(maximum)))
 
 	alloc_info := vk.MemoryAllocateInfo{
 		sType = .MEMORY_ALLOCATE_INFO,
@@ -311,7 +312,7 @@ vulkan_allocate_relaxed :: proc(memory: ^vk.DeviceMemory, init_state: ^Vulkan_In
 		memoryTypeIndex = i,
 	}
 
-	for alloc_info.allocationSize >= min {
+	for alloc_info.allocationSize >= minimum {
 		when CONFIG_VERBOSE_LOG do log.debugf("Trying to allocate: %.2f MB", f64(alloc_info.allocationSize) / mem.Megabyte)
 
 		result := vk.AllocateMemory(init_state.device.handle, &alloc_info, callbacks, memory)

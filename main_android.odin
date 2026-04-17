@@ -13,8 +13,8 @@ android_main :: proc "c" (android_app_state: ^android.android_app) {
 	// actual custom context will be created later, for now we need context with user_ptr set to global state
 	context = init_android_state(android_app_state, &state)
 
-	for {
-		engine_poll_events(&state) or_break
+	for engine_is_running(&state) {
+		engine_poll_events(&state)
 		context = state.app_context.ctx // here we assign actual context?
 
 		if .Focus in state.flags {
@@ -55,7 +55,7 @@ handle_android_cmd : Proc_Handle_Anroid_CMD : proc "c" (app: ^android.android_ap
 }
 
 
-android_poll_events :: proc(engine_state: ^Engine_Android_Global_State) -> (running: bool) {
+android_poll_events :: proc(engine_state: ^Engine_Android_Global_State) {
 	if engine_state == nil do return
 	POLL :: 0
 	SLEEP :: -1
@@ -72,8 +72,9 @@ android_poll_events :: proc(engine_state: ^Engine_Android_Global_State) -> (runn
 		if ident < 0 do break
 
 		if source != nil do source.process(engine_state.app_ptr, source)
-		if engine_state.app_ptr.destroyRequested != 0 do return false
 	}
+}
 
-	return true
+android_is_running :: proc(state: ^Engine_Android_Global_State) -> bool {
+	return state.app_ptr.destroyRequested == 0 ? true : false
 }
