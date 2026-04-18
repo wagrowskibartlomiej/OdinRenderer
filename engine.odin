@@ -70,5 +70,7 @@ engine_is_running :: proc(state: ^Engine_Global_State) -> bool {
 
 engine_process_input :: proc() {}
 engine_update_logic :: proc() {}
-engine_draw_frame :: proc() {}
+engine_draw_frame :: proc(state: ^Engine_Global_State) {
+	vulkan_draw()
+}
 

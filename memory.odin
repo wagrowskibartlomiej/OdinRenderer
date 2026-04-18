@@ -294,14 +294,13 @@ vulkan_allocate_fixed :: proc(memory: ^vk.DeviceMemory, init_state: ^Vulkan_Init
 //TODO: Implement
 //vulkan_allocate_fixed_search :: proc(init_state: ^Vulkan_Init_State, size: int) {}
 
+
 /*
-	Tries to allocate memory in spiecified memory type, if size is not available it'll scale down and try to get anything available until minimum value is reached
-NOTE:
-	Shoud be used only in loading times or at the start of the app
-TODO:
-	For now just use this, but in future add check for VK_EXT_memory_budget and use it if available with dedicated procedure
+Tries to allocate memory in spiecified memory type, if size is not available it'll scale down and try to get anything available until minimum value is reached
+NOTE: Shoud be used only in loading times or at the start of the app
 */
 vulkan_allocate_relaxed :: proc(memory: ^vk.DeviceMemory, init_state: ^Vulkan_Init_State, mem_index: int, size: vk.DeviceSize, minimum : vk.DeviceSize = 64 * mem.Megabyte, lower_by_percent: f64 = 0.1, maximum := MAX_GPU_MEMORY_MANAGER_BLOCK_ALLOCATION, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool, allocated_size: vk.DeviceSize) {
+	// TODO: For now just use this, but in future add check for VK_EXT_memory_budget and use it if available with dedicated procedure
 	if init_state == nil || memory == nil || size < minimum || mem_index < 0 || lower_by_percent <= 0 do return
 	i := u32(mem_index)
 	size := vk.DeviceSize(min(u64(size), u64(maximum)))
