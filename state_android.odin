@@ -19,6 +19,7 @@ Engine_Android_Global_State :: struct {
 	cmd_proc: Proc_Handle_Anroid_CMD,
 	input_proc: Proc_Handle_Android_Input,
 	flags: Engine_Android_Flags,
+	current_frame_index: int,
 }
 
 Engine_Android_Flag :: enum {

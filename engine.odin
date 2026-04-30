@@ -1,5 +1,7 @@
 package engine
 
+import vk "vendor:vulkan"
+
 import "base:runtime"
 import "core:log"
 
@@ -35,23 +37,23 @@ engine_renderer_init :: proc(state: ^Engine_Global_State) -> (success: bool) {
 	success or_return
 
 	initialize_vulkan(&state.renderer, state)
-	if !check_all_flags(state.renderer.init.resource_flags) {
+	if !check_all_flags(state.renderer.core.resource_flags) {
 		log.fatal("Initalization not completed successfuly")
 		cleanup_vulkan(&state.renderer)
 		return
 	}
 
-	success = gpu_initialize_memory_manager(&state.renderer.init, &state.renderer.memory)
+	success = gpu_initialize_memory_manager(&state.renderer.core, &state.renderer.memory)
 	success or_return
 
-	success = init_frame_resources(&state.renderer.frame, &state.renderer.init)
+	success = init_frame_resources(&state.renderer.dyn, &state.renderer.core, &state.renderer.memory)
 	success or_return
 
 	return true
 }
 engine_renderer_cleanup :: proc(state: ^Engine_Global_State) {
-	cleanup_frame_resources(&state.renderer.init, &state.renderer.frame)
-	gpu_cleanup_memory_manager(&state.renderer.init, &state.renderer.memory)
+	cleanup_frame_resources(&state.renderer.core, &state.renderer.dyn, &state.renderer.memory)
+	gpu_cleanup_memory_manager(&state.renderer.core, &state.renderer.memory)
 	cleanup_vulkan(&state.renderer)
 	cleanup_window(&state.window)
 }
@@ -69,8 +71,17 @@ engine_is_running :: proc(state: ^Engine_Global_State) -> bool {
 }
 
 engine_process_input :: proc() {}
-engine_update_logic :: proc() {}
-engine_draw_frame :: proc(state: ^Engine_Global_State) {
-	vulkan_draw()
-}
 
+engine_update :: proc(state: ^Engine_Global_State, data: rawptr, size: int, update: bool) {
+	if update do move_data_to_vertex_buffer(&state.renderer.core, &state.renderer.dyn, data, size)
+}
+engine_draw_frame :: proc(state: ^Engine_Global_State, frame_index: int, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> vk.Result {
+	res := draw_frame(&state.renderer.core, &state.renderer.dyn, state.window.handle, frame_index, allocator, callbacks)
+	#partial switch res {
+	case .SUCCESS:
+	case .ERROR_OUT_OF_DATE_KHR, .SUBOPTIMAL_KHR: recreate_swapchain(&state.renderer.core, state.window.handle, allocator, callbacks)
+	case: log.panicf("Drawing failure: %v", res)
+	}
+
+	return res
+}

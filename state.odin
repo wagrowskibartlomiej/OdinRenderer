@@ -101,7 +101,7 @@ engine_create_default_context : Engine_Create_Context_Proc : proc "contextless" 
 engine_cleanup_default_context : Engine_Cleanup_Context_Proc : proc(context_state: ^Context_State, procs: Context_State_Cleanup_Procs = {}, data: rawptr = nil) {
 	procs := set_default_context_cleanup_procs(procs)
 
-	using context_state 
+	using context_state
 	if .Logger in resource_flags do procs.cleanup_logger(ctx.logger, ctx.allocator, procs.logger_data)
 	unset_resource_flag(&resource_flags, Context_Resource_Flag.Logger)
 
@@ -183,5 +183,5 @@ change_logger_ident :: proc(new_ident: string, state: ^Context_State) {
 
 get_global_state :: proc() -> ^Engine_Global_State {
 	if context.user_ptr == nil do return nil
-	return cast(^Engine_Global_State)context.user_ptr 
+	return cast(^Engine_Global_State)context.user_ptr
 }

@@ -50,40 +50,36 @@ log_called_when_resource_unset :: proc(proc_name: string, resource_flag: $T) whe
 	log.warnf("Called '%v' when resource flag '%v' is not set", proc_name, resource_flag)
 }
 
-find_aligned_offset_closest :: proc(offset, alignment: i64) -> i64 {
-	if alignment < 0 do return -1
-	else if alignment == 0 do return offset
+find_aligned_offset_align_down :: proc(offset, alignment: u64) -> i64 {
+	if alignment == 0 {
+		return -1
+	}
 
-	if offset % alignment == 0 do return offset
-
-	how_many_fits := (offset / alignment)
-
-	aligned_down := how_many_fits * alignment
-	aligned_up := aligned_down + alignment
-
-	if aligned_up - offset < offset - aligned_down do return aligned_up
-	else do return aligned_down
-}
-
-find_aligned_offset_align_down :: proc(offset, alignment: i64) -> i64 {
-	if alignment < 0 do return -1
-	else if alignment == 0 do return offset
-
-	if offset % alignment == 0 do return offset
+	if offset % alignment == 0 {
+		return offset
+	}
 
 	how_many_fits := (offset / alignment)
 
 	return how_many_fits * alignment
 }
 
-find_aligned_offset_align_up :: proc(offset, alignment: i64) -> i64 {
-	if alignment < 0 do return -1
-	else if alignment == 0 do return offset
+find_aligned_offset_align_up :: proc(offset, alignment: u64) -> i64 {
+	if alignment == 0 {
+		return -1
+	}
 
-	if offset % alignment == 0 do return offset
+	if offset % alignment == 0 {
+		return offset
+	}
 
 	how_many_fits := (offset / alignment)
 
 	return (how_many_fits + 1) * alignment
 }
 
+align_up_pow_2 :: proc(value, alignment: u64) -> u64 {
+	assert(alignment > 0 && (alignment & (alignment - 1)) == 0)
+
+	return (value + alignment - 1) & ~(alignment - 1)
+}

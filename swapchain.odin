@@ -32,6 +32,10 @@ choose_swapchain_image_extent :: proc(capabilities: vk.SurfaceCapabilitiesKHR, w
 		when CONFIG_BUILD_TARGET != Build_Targets[.Pc] do log.panicf("Value of current extent set to max(u32) is supported only for desktop builds")
 		else {
 			width, height := glfw.GetFramebufferSize(glfw.WindowHandle(window_handle))
+			for width == 0 || height == 0 {
+				width, height = glfw.GetFramebufferSize(glfw.WindowHandle(window_handle))
+				glfw.WaitEvents()
+			}
 
 			extent := vk.Extent2D{
 				u32(width),
@@ -54,12 +58,18 @@ choose_swapchain_presentation_mode :: proc(present_modes: []vk.PresentModeKHR) -
 	return present_modes[0]
 }
 
-create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_swapchain: vk.SwapchainKHR, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
-	if .Swapchain in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Init_Resource_Flag.Swapchain)
+create_swapchain :: proc(state: ^Core_Vk_State, window_handle: rawptr, old_swapchain: vk.SwapchainKHR, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
+	if .Swapchain in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Static_State_Resource_Flag.Swapchain)
 
 	NON_STEREOSCOPIC :: 1
-	DEFAULT_USAGE : vk.ImageUsageFlags : {.TRANSFER_DST, .COLOR_ATTACHMENT}
-	DEFAULT_COMPOSITE_ALPHA : vk.CompositeAlphaFlagsKHR : {.OPAQUE}
+	DEFAULT_USAGE : vk.ImageUsageFlags : {.COLOR_ATTACHMENT}
+	DEFAULT_COMPOSITE_ALPHA : vk.CompositeAlphaFlagsKHR
+	supported_alphas := state.physical_devices.active.capabilites.supportedCompositeAlpha
+
+	if .OPAQUE in supported_alphas do DEFAULT_COMPOSITE_ALPHA = {.OPAQUE}
+	else if .INHERIT in supported_alphas do DEFAULT_COMPOSITE_ALPHA = {.INHERIT}
+	else if .PRE_MULTIPLIED in supported_alphas do DEFAULT_COMPOSITE_ALPHA = {.PRE_MULTIPLIED}
+	else do DEFAULT_COMPOSITE_ALPHA = {.POST_MULTIPLIED}
 
 	state.swapchain.image_format = choose_swapchain_image_format(state.physical_devices.active.formats)
 	when CONFIG_VERBOSE_LOG do log.debugf("Chosen swapchain image format and color: %v | %v", state.swapchain.image_format.format, state.swapchain.image_format.colorSpace)
@@ -69,11 +79,10 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 	when CONFIG_VERBOSE_LOG do log.debugf("Chosen swapchain presentation mode: %v", state.swapchain.present_mode)
 
 
-
 	swapchain_create_info := vk.SwapchainCreateInfoKHR{
 		sType = .SWAPCHAIN_CREATE_INFO_KHR,
 		surface = state.surface.handle,
-		minImageCount = state.physical_devices.active.capabilites.minImageCount,
+		minImageCount = state.physical_devices.active.capabilites.minImageCount + 1,
 		preTransform = state.physical_devices.active.capabilites.currentTransform,
 		imageFormat = state.swapchain.image_format.format,
 		imageColorSpace = state.swapchain.image_format.colorSpace,
@@ -88,7 +97,7 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 		pQueueFamilyIndices = nil,
 		queueFamilyIndexCount = 0,
 		oldSwapchain = old_swapchain,
-		
+
 	}
 
 	result := vk.CreateSwapchainKHR(state.device.handle, &swapchain_create_info, callbacks, &state.swapchain.handle)
@@ -154,29 +163,76 @@ create_swapchain :: proc(state: ^Vulkan_Init_State, window_handle: rawptr, old_s
 		}
 	}
 	when CONFIG_VERBOSE_LOG do log.debug("Swapchain image views created")
-	
+
 	state.resource_flags |= {.Swapchain}
 	when CONFIG_VERBOSE_LOG do log.debug("Swapchain resource flag set")
 
 	success = true
-	return 
+	return
 }
 
-cleanup_swapchain :: proc(state: ^Vulkan_Init_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
+cleanup_swapchain :: proc(state: ^Core_Vk_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Swapchain not_in state.resource_flags {
 		log.warn("Called swapchain cleanup when swapchain resource flag is unset")
 		return
 	}
 
-	for i in state.swapchain.images do vk.DestroyImageView(state.device.handle, i.view, callbacks)
-	when CONFIG_VERBOSE_LOG do log.debug("Swapchain image views destroyed")
-
-	delete(state.swapchain.images, allocator)
-	when CONFIG_VERBOSE_LOG do log.debug("Swapchain images cleaned up")
-	
-	vk.DestroySwapchainKHR(state.device.handle, state.swapchain.handle, callbacks)
-	when CONFIG_VERBOSE_LOG do log.debug("Swapchain destroyed")
+	destroy_swapchain_internal(state.device.handle, &state.swapchain)
 
 	state.resource_flags &~= {.Swapchain}
 	when CONFIG_VERBOSE_LOG do log.debug("Swapchain resource flag unset")
+}
+
+destroy_swapchain_internal :: proc(device: vk.Device, swapchain: ^Swapchain_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
+	for i in swapchain.images do vk.DestroyImageView(device, i.view, callbacks)
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain image views destroyed")
+
+	delete(swapchain.images, allocator)
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain images cleaned up")
+
+	vk.DestroySwapchainKHR(device, swapchain.handle, callbacks)
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain destroyed")
+}
+
+recreate_swapchain :: proc(init: ^Core_Vk_State, window_handle: rawptr, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
+	assert(init != nil && window_handle != nil)
+
+	vk.DeviceWaitIdle(init.device.handle)
+	vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(init.physical_devices.active.handle, init.surface.handle, &init.physical_devices.active.capabilites)
+	cleanup_framebuffers(init, allocator, callbacks)
+
+	old_swapchain := init.swapchain
+	success := create_swapchain(init, window_handle, old_swapchain.handle, allocator, callbacks)
+	if !success {
+		log.panic("Swapchain recreation failure")
+	}
+
+	if old_swapchain.image_format.format != init.swapchain.image_format.format {
+		log.panic("Unexpected swapchain format change, aborting") //TODO: Maybe handle with render pass recreation
+	}
+
+	old_pipelines := init.pipelines
+
+	init.pipelines.triangle.handle, success = create_triangle_pipeline_internal(
+		init.device.handle,
+		init.render_passes.main_render_pass,
+		old_pipelines.triangle.layout,
+		old_pipelines.triangle.vertex_module,
+		old_pipelines.triangle.fragment_module,
+		init.swapchain.image_extent,
+		old_pipelines.cache,
+		callbacks
+	)
+
+	if !success {
+		log.panic("Pipeline recreation failure")
+	}
+
+	destroy_swapchain_internal(init.device.handle, &old_swapchain, allocator, callbacks)
+	vk.DestroyPipeline(init.device.handle, old_pipelines.triangle.handle, callbacks)
+
+	success = build_framebuffers(init, allocator, callbacks)
+	if !success {
+		log.panic("Framebuffers rebuilding failure")
+	}
 }
