@@ -1,16 +1,19 @@
 package engine
 
 import "core:c"
+import "core:log"
+import "core:slice"
 import "vendor:glfw"
 
 main :: proc () {
-	engine_state: Engine_Global_State
+	engine_state := new(Engine_Global_State)
+	defer free(engine_state)
 
-	context = engine_init(&engine_state)
-	defer engine_cleanup(&engine_state)
+	context = engine_init(engine_state)
+	defer engine_cleanup(engine_state)
 
-	success := engine_renderer_init(&engine_state)
-	defer engine_renderer_cleanup(&engine_state)
+	success := engine_renderer_init(engine_state)
+	defer engine_renderer_cleanup(engine_state)
 	if !success do return
 
 	one_time_send := true
@@ -27,12 +30,12 @@ main :: proc () {
 
 
 	current_frame: int
-	for engine_is_running(&engine_state) {
-		engine_poll_events(&engine_state)
+	for engine_is_running(engine_state) {
+		engine_poll_events(engine_state)
 
 		engine_process_input()
-		engine_update(&engine_state, &tri, size_of(tri), one_time_send)
-		engine_draw_frame(&engine_state, current_frame)
+		engine_update(raw_data(tri[:]), slice.size(tri[:]), true)
+		engine_draw_frame(engine_state, current_frame)
 
 		if one_time_send do one_time_send = false
 

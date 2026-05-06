@@ -1,46 +1,50 @@
 package engine
 
 import "core:mem"
+import "core:log"
 import "core:sort"
+import "core:c/libc"
+import "core:c"
 
 import "base:runtime"
 
 import vk "vendor:vulkan"
 
+GPU_RESOURCE_HANDLE_BACKING_TYPE :: distinct u64
+GPU_RESOURCE_HANDLE_INDEX_BITS :: 20
+GPU_RESOURCE_HANDLE_ID_BITS :: 44
+GPU_RESOURCE_HANDLE_INDEX_MAX :: (1 << GPU_RESOURCE_HANDLE_INDEX_BITS) - 1
+GPU_RESOURCE_HANDLE_ID_MAX :: (1 << GPU_RESOURCE_HANDLE_ID_BITS) - 1
+
 GPU_Resources_State :: struct {
-	//resource_pool_allocator,
+	//resource_pool_allocator TODO: Implement pool allocating and exclusive linear allocator,
 	//resource_linear_allocator,
 	resource_static_allocator: GPU_Resource_Allocator,
-	handles: [dynamic]GPU_Internal_Handle,
-	resources_map: map[GPU_Resource_Handle]GPU_Resource_Data,
-	internal_allocator: runtime.Allocator, // for Odin side allocations
 	callbacks: ^vk.AllocationCallbacks,
-	_validation_id_counter: i64,
-	_handles_append: bool, // Used to prevent fragmentation of handles array with avoiding handles index changing
+	datas: [dynamic]GPU_Resource_Data,
+	_internal_allocator: runtime.Allocator, // for Odin side allocations
+	_validation_id_counter: u64,
+	_free_list_idx: int, // Used for tracking free list
 }
 
-GPU_User_Handle :: struct {
-	index: int,
-	validation_id: i64, // incremental id generation for usage validation (index may be valid range, but the handle undearneath is different)
+GPU_Resource_Handle :: bit_field GPU_RESOURCE_HANDLE_BACKING_TYPE {
+	index: u32 | GPU_RESOURCE_HANDLE_INDEX_BITS,
+	id: i64 | GPU_RESOURCE_HANDLE_ID_BITS, // used for validation
 }
-GPU_USER_HANDLE_NIL :: GPU_User_Handle{-1, -1}
-
-GPU_Internal_Handle :: struct {
-	handle: GPU_Resource_Handle,
-	validation_id: i64,
-}
-GPU_INTERNAL_HANDLE_NIL :: GPU_Internal_Handle{nil, -1}
+GPU_RESOURCE_HANDLE_NIL :: GPU_Resource_Handle(max(GPU_RESOURCE_HANDLE_BACKING_TYPE))
 
 GPU_Resource_Data :: struct {
+    resource: Vulkan_Resource,
+    handle: GPU_Resource_Handle,
     type: GPU_Resource_Type,
     usage: GPU_Resource_Usage,
     data_size, backing_size, offset: vk.DeviceSize,
     parent_idx: int, // index of allocated block that is containing the resource
-    taken_region_idx: int,
+    taken_region_idx: int, // used to access parent's region that describes resource
     pool_elems: [dynamic]GPU_Region
 }
 
-GPU_Resource_Handle :: union {
+Vulkan_Resource :: union {
     vk.Buffer,
     vk.Image,
 }
@@ -67,14 +71,6 @@ GPU_Resource_Type :: enum {
     //Texture_2D,
 }
 
-GPU_Resource_Error :: enum {
-    None = 0,
-    Mode_Unsupported,
-    Memory_Unsupported,
-    Not_Implemented,
-    Creation_Failure,
-}
-
 GPU_Resource_Create_Info_Presets := #partial [GPU_Resource_Type]GPU_Resource_Create_Info{
     .Vertex_Buffer = {
         buffer = vk.BufferCreateInfo{
@@ -85,75 +81,71 @@ GPU_Resource_Create_Info_Presets := #partial [GPU_Resource_Type]GPU_Resource_Cre
     },
 }
 
-gpu_initalize_resources :: proc(res_state: ^GPU_Resources_State, static_res_alloc: GPU_Resource_Allocator = {gpu_default_static_resource_allocator, nil}, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
-	res_state.handles = make([dynamic]GPU_Internal_Handle)
-	res_state.resources_map = make(map[GPU_Resource_Handle]GPU_Resource_Data)
-	res_state.resource_static_allocator = static_res_alloc
-	res_state._handles_append = true
-	res_state.internal_allocator = allocator
+gpu_initalize_resources :: proc(res_state: ^GPU_Resources_State, res_static_alloc: GPU_Resource_Allocator = {gpu_default_static_resource_allocator, nil}, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (mem.Allocator_Error) {
+	res_state.datas = make([dynamic]GPU_Resource_Data) or_return
+	res_state.resource_static_allocator = res_static_alloc
 	res_state.callbacks = callbacks
+	res_state._free_list_idx = GPU_FREE_LIST_ABSENT_VALUE
+	res_state._internal_allocator = allocator
+
+	return nil
 }
 
-gpu_cleanup_resources :: proc(res_state: GPU_Resources_State) {
-	for h, _ in res_state.resources_map {
-		gpu_destroy(h, res_state)
+gpu_cleanup_resources :: proc(res_state: ^GPU_Resources_State) {
+	for data in res_state.datas {
+		if !_is_handle(data.handle) do continue
+		gpu_destroy(data.handle)
 	}
+
+	delete(res_state.datas)
 }
 
-gpu_create :: proc(type: GPU_Resource_Type, usage: GPU_Resource_Usage, size: vk.DeviceSize, flags: vk.MemoryPropertyFlags, mapable: bool, alignment: vk.DeviceSize = 0, info: GPU_Resource_Create_Info = {}) -> (handle: GPU_User_Handle, err: GPU_Allocator_Error)  {
-	assert(context.user_ptr != nil)
-	state := (^Engine_Global_State)(context.user_ptr)
+gpu_create :: proc(type: GPU_Resource_Type, usage: GPU_Resource_Usage, size: vk.DeviceSize, flags: vk.MemoryPropertyFlags, mappable: bool, alignment: vk.DeviceSize = 0, info: GPU_Resource_Create_Info = {}) -> (handle: GPU_Resource_Handle, err: GPU_Error)  {
+	r := &get_global_state().renderer
+	static := r.resources.resource_static_allocator
+	request := GPU_Resource_Allocator_Request{
+		info = info,
+		mappable = mappable,
+		type = type,
+		alignment = alignment,
+		allocator = r.resources._internal_allocator,
+		flags = flags,
+		size = size,
+	}
 
-	static_allocator := state.renderer.resources.resource_static_allocator
-	switch usage {
+	#partial switch usage {
 	case .Static:
-		res, handle := static_allocator.procedure(.Create, type, info, size, alignment, flags, mapable, resources_state.internal_allocator, resources_state.callbacks, static_allocator.data) or_return
-		h := gpu_update_resources_addition(res, handle, resources_state)
-		return h, nil
-	case .Pool: return GPU_USER_HANDLE_NIL, .Not_Implemented
-	}
-
-}
-
-gpu_destroy :: proc{
-	gpu_destroy_by_res_handle,
-	gpu_destroy_by_user_handle,
-}
-
-gpu_destroy_by_user_handle :: proc(handle: GPU_User_Handle) -> GPU_Allocator_Error {
-	if handle == GPU_USER_HANDLE_NIL do return
-
-	assert(context.user_ptr != nil)
-	g := (^Engine_Global_State)(context.user_ptr)
-	state := g.renderer
-
-	h := get_resource_handle_from_user_handle(handle, state.resources.handles[:])
-	if h == nil {
-		return .Unknown
-	}
-
-	return gpu_destroy_by_res_handle(h, &state.resources)
-}
-
-gpu_destroy_by_res_handle :: proc(h: GPU_Resource_Handle, resources: ^GPU_Resources_State) -> GPU_Allocator_Error {
-	assert(resources != nil)
-
-	res, exists := resources.resources_map[h]
-	if !exists {
-		return .Unknown
-	}
-
-	static_allocator := resources.resource_static_allocator
-
-	switch res.usage {
-	case .Static:
-		// we do handle copy earlier so ignore the one returned
-		_, ok := gpu_update_resources_deletion(h, &resources)
-		// Log that error happened, but perform destroy call still, It probably will work
-		if !ok {
-			log.error("GPU Resource deletion failure")
+		res, err, idx := static.procedure(.Create, request, {}, r.resources.callbacks, static.data)
+		if err != nil {
+			return {}, err
 		}
-		static_allocator.procedure(.Destroy, res.type, {}, res.backing_size, 0, nil, false, resources.internal_allocator, handle, res, resources.callbacks, static_allocator.data)
+		res.handle = _gpu_update_resources_addition(res, &r.resources) or_return
+		res.taken_region_idx = _gpu_update_block_res_created({{res.offset, res.backing_size}, handle}, idx, &r.memory.blocks[res.parent_idx])
+		return res.handle, nil
+	case: return {}, .Not_Implemented
+	}
+}
+
+gpu_destroy :: proc(handle: GPU_Resource_Handle) -> GPU_Error {
+	r := get_global_state().renderer.resources
+
+	res := gpu_get_resource_from_handle(handle)
+	if res == nil {
+		return .Unknown
+	}
+
+	data := r.datas[handle.id]
+	if !_validate_handles(handle, data.handle) {
+		return .Unknown
+	}
+
+	static_allocator := r.resource_static_allocator
+
+	switch data.usage {
+	case .Static:
+		static_allocator.procedure(.Destroy, {}, handle, r.callbacks, static_allocator.data)
+		_gpu_update_block_res_destroyed(data.taken_region_idx, data.parent_idx)
+		_gpu_update_resources_deletion(handle, &r)
 	case .Pool: return .Not_Implemented
 	}
 
@@ -162,69 +154,108 @@ gpu_destroy_by_res_handle :: proc(h: GPU_Resource_Handle, resources: ^GPU_Resour
 
 gpu_copy :: proc{
 	gpu_copy_buffers,
-	gpu_copy_to_mapable_buffer,
+	gpu_copy_to_mappable_buffer,
 }
 
 // Procedure expects that caller will manage submition and call to `vk.BeginCommandBuffer`.
-gpu_copy_buffers :: proc(cmd: vk.CommandBuffer, dst, src: GPU_User_Handle, regions: []vk.BufferCopy) -> (success: bool) {
-	assert(context.user_ptr != nil)
-	g := (^Engine_Global_State)(context.user_ptr)
+gpu_copy_buffers :: proc(cmd: vk.CommandBuffer, dst, src: GPU_Resource_Handle, regions: []vk.BufferCopy) -> (success: bool) {
+	dst_buffer := gpu_get_resource_from_handle(dst).(vk.Buffer) or_return
+	src_buffer := gpu_get_resource_from_handle(src).(vk.Buffer) or_return
 
-	dst_buffer := get_resource_handle_from_user_handle(dst, g.renderer.resources.handles[:])
-	src_buffer := get_resource_handle_from_user_handle(src, g.renderer.resources.handles[:])
-
-	dst := dst_buffer.(vk.Buffer) or_return
-	src := src_buffer.(vk.Buffer) or_return
-
-	vk.CmdCopyBuffer(cmd, src, dst, u32(len(regions)), raw_data(regions))
+	vk.CmdCopyBuffer(cmd, src_buffer, dst_buffer, u32(len(regions)), raw_data(regions))
 	return true
 }
 
-gpu_copy_to_mapable_buffer :: proc(dst: GPU_User_Handle, data: rawptr, size: int) -> (success, flush_required: bool) {
-	assert(context.user_ptr != nil && size > 0)
-	g := (^Engine_Global_State)(context.user_ptr)
+gpu_copy_to_mappable_buffer :: proc(dst: GPU_Resource_Handle, ptr: rawptr, size: int) -> (flush_required: bool, success: bool) {
+	r := get_global_state().renderer
 
-	handle := get_resource_handle_from_user_handle(dst, g.renderer.resources.handles[:])
-	res := g.renderer.resources.resources_map[handle] or_return
+	handle := gpu_get_resource_from_handle(dst).(vk.Buffer) or_return
+	data := r.resources.datas[dst.index]
 
-	assert(res.parent_idx < len(g.renderer.memory.allocated_blocks))
-	block := g.renderer.memory.allocated_blocks[res.parent_idx]
+	assert(data.parent_idx < len(r.memory.blocks) && data.parent_idx >= 0)
+	block := r.memory.blocks[data.parent_idx]
 
-	if block.mapped_ptr == nil || res.data_size < vk.DeviceSize(size) {
+	if block.mapped_ptr == nil || data.data_size < vk.DeviceSize(size) {
 		return
 	}
 
-	target := cast(rawptr) (uintptr(block.mapped_ptr) + res.offset)
+	target := cast(rawptr) (uintptr(block.mapped_ptr) + uintptr(data.offset))
 
-	mem.copy(target, data, size) // Maybe using mem.copy_non_overlapping would be better? Most of the time It shouldn't overlap
+	// Maybe using mem.copy_non_overlapping would be better? I'm leaving it like that for safety now, TODO: Check if memory can ever overlap in this scenario
+	mem.copy(target, ptr, size)
 	if .HOST_COHERENT in block.flags {
-		return true, false
+		return false, true
 	}
 
 	return true, true
 }
 
-gpu_create_buffer :: proc(device: vk.Device, info: vk.BufferCreateInfo, callbacks: ^vk.AllocationCallbacks) -> (buff: vk.Buffer, success: bool) {
-    buff: vk.Buffer
-    result := vk.CreateBuffer(device, &info, callbacks, &buff)
+GPU_Data_Transfer_Action :: enum {
+	Submit_Cmd_Buffer,
+	Flush_Destination,
+	Flush_Staging,
+}
+GPU_Data_Transfer_Action_Flags :: bit_set[GPU_Data_Transfer_Action]
+
+// Moves data to gpu buffer passed in `dst` param. If possible, copies directly to mapped, if not tries to use staging buffer.
+// If procedure needs to use stagin buffer, the command buffer passed in `staging` is used for recording and procedure calls `begin_command_buffer` and `end_command_buffer` on it.
+// Also it's up to the caller to submit staging command buffer.
+// Returned `actions` param idicates which actions are required to properly synchronize memory access.
+gpu_move_data_to_buffer :: proc(data: rawptr, size: int, dst: GPU_Resource_Handle, staging: Maybe(Staging_Buffer)) -> (actions: GPU_Data_Transfer_Action_Flags, success: bool) {
+	r := get_global_state().renderer
+	parent_idx := r.resources.datas[dst.index].parent_idx
+
+	if r.memory.blocks[parent_idx].mapped_ptr != nil {
+		flush_required := gpu_copy_to_mappable_buffer(dst, data, size) or_return
+		if flush_required {
+			actions += {.Flush_Destination}
+		}
+		return actions, true
+	}
+
+	s := staging.? or_return
+
+	// Wait till we can use staging cmd buffer and actually copy into it
+	vk.WaitForFences(r.core.device.handle, 1, &s.fence, true, VK_TIMEOUT_MAX)
+	vk.ResetFences(r.core.device.handle, 1, &s.fence)
+
+	result := vk.ResetCommandPool(r.core.device.handle, s.pool, nil)
+	if result != .SUCCESS {
+		log.panicf("Staging buffer command pool resetting failure: %v", result)
+	}
+
+	flush_required := gpu_copy_to_mappable_buffer(s.handle, data, size) or_return
+
+	if flush_required {
+		actions += {.Flush_Staging}
+	}
+
+	region := []vk.BufferCopy{{0, 0, vk.DeviceSize(size)}}
+
+	begin_command_buffer(s.cmd_buff) or_return
+	gpu_copy_buffers(s.cmd_buff, dst, s.handle, region) or_return
+	end_command_buffer(s.cmd_buff) or_return
+	actions += {.Submit_Cmd_Buffer}
+
+	return actions, true
+}
+
+_gpu_create_buffer :: proc(device: vk.Device, info: ^vk.BufferCreateInfo, callbacks: ^vk.AllocationCallbacks) -> (buff: vk.Buffer, success: bool) {
+    result := vk.CreateBuffer(device, info, callbacks, &buff)
     if result != .SUCCESS {
         when CONFIG_VERBOSE_LOG do log.errorf("Buffer creation failure: %v", result)
     }
     return buff, result == .SUCCESS
 }
 
-gpu_destroy_buffer :: proc(device: vk.Device, buffer: vk.Buffer, callbacks: ^vk.AllocationCallbacks) {
-    vk.DestroyBuffer(device, buffer, callbacks)
-}
-
-gpu_get_buffer_requirements :: proc(device: vk.Device, buffer: vk.Buffer) -> vk.MemoryRequirements {
+_gpu_get_buffer_requirements :: proc(device: vk.Device, buffer: vk.Buffer) -> vk.MemoryRequirements {
     req: vk.MemoryRequirements
     vk.GetBufferMemoryRequirements(device, buffer, &req)
 
     return req
 }
 
-gpu_get_storage_buffer_requirements :: proc(device: vk.Device, buffer: vk.Buffer, limits: vk.PhysicalDeviceLimits) -> vk.MemoryRequirements {
+_gpu_get_storage_buffer_requirements :: proc(device: vk.Device, buffer: vk.Buffer, limits: vk.PhysicalDeviceLimits) -> vk.MemoryRequirements {
     req: vk.MemoryRequirements
     vk.GetBufferMemoryRequirements(device, buffer, &req)
 
@@ -237,33 +268,33 @@ gpu_get_storage_buffer_requirements :: proc(device: vk.Device, buffer: vk.Buffer
     If `search_free` is set to true, `free_region_index` is the region in which the offset has been found.
     WARN: caller is responsible for updating the region list
 */
-gpu_find_offset_for_resource :: proc(memory: GPU_Memory, alignment, size: vk.DeviceSize, search_free: bool) -> (offset : i64 = -1, free_region_index := -1) {
-    off := gpu_find_offset_alloc_linear(memory, alignment, size)
+_gpu_find_offset_for_resource :: proc(memory: GPU_Memory_Block, alignment, size: vk.DeviceSize, search_free: bool) -> (offset : i64 = -1, free_region_index := -1) {
+    off := _gpu_find_offset_alloc_linear(memory, alignment, size)
     if off != -1 || !search_free do return off, -1
 
-    return gpu_find_offset_free_regions(memory.free_regions[:], alignment, size)
+    return _gpu_find_offset_free_regions(memory.free_regions[:], alignment, size)
 }
 
-gpu_find_offset_alloc_linear :: proc(memory: GPU_Memory, alignment, size: vk.DeviceSize) -> (offset: i64) {
+_gpu_find_offset_alloc_linear :: proc(memory: GPU_Memory_Block, alignment, size: vk.DeviceSize) -> (offset: i64) {
     if memory.allocated + size > memory.size || memory.linear_write_offset + size > memory.size {
         return -1
     }
 
-    off := find_aligned_offset_align_up(memory.linear_write_offset, alignment)
+    off := find_aligned_offset_align_up(u64(memory.linear_write_offset), u64(alignment))
 
-    if off + size > memory.size {
+    if vk.DeviceSize(off) + size > memory.size {
         return -1
     }
 
     return off
 }
 
-gpu_find_offset_free_regions :: proc(regions: []GPU_Region, alignment, size: vk.DeviceSize) -> (offset: i64, region_index: int) {
+_gpu_find_offset_free_regions :: proc(regions: []GPU_Region, alignment, size: vk.DeviceSize) -> (offset: i64, region_index: int) {
     for r, i in regions {
         if r.size < size do continue
 
-        off := find_aligned_offset_align_up(r.offset, alignment)
-        if off == -1 || off + size > r.size + r.offset do continue
+        off := find_aligned_offset_align_up(u64(r.offset), u64(alignment))
+        if off == -1 || vk.DeviceSize(off) + size > r.size + r.offset do continue
 
         return off, i
     }
@@ -271,14 +302,14 @@ gpu_find_offset_free_regions :: proc(regions: []GPU_Region, alignment, size: vk.
     return -1, -1
 }
 
-gpu_readjust_requirements_for_mapping :: proc(requirements: vk.MemoryRequirements, limits: vk.PhysicalDeviceLimits) -> (alignment, size: vk.DeviceSize) {
+_gpu_readjust_requirements_for_mapping :: proc(requirements: vk.MemoryRequirements, limits: vk.PhysicalDeviceLimits) -> (alignment, size: vk.DeviceSize) {
 	final_align := max(requirements.alignment, limits.nonCoherentAtomSize)
-	final_size := align_up_pow_2(requirements.size, final_align)
+	final_size := align_up_pow_2(u64(requirements.size), u64(final_align))
 
-	return final_align, final_size
+	return final_align, vk.DeviceSize(final_size)
 }
 
-gpu_update_memory_addition :: proc(new_reg: GPU_Region_Resource, free_reg_index: int,  block: ^GPU_Memory) -> (taken_region_idx: int) {
+_gpu_update_block_res_created :: proc(new_reg: GPU_Taken_Region, free_reg_index: int,  block: ^GPU_Memory_Block) -> (taken_region_idx: int) {
 	assert(block != nil)
 	// If we've used free region index, we need to check if we used it all,
 	// if so remove it ordered to not sort anymore
@@ -286,10 +317,10 @@ gpu_update_memory_addition :: proc(new_reg: GPU_Region_Resource, free_reg_index:
 	if free_reg_index >= 0 {
 		free_reg := block.free_regions[free_reg_index]
 
-		gpu_update_free_region_based_on_new_addition(block, free_reg, new_reg)
+		_gpu_update_free_region_based_on_new_addition(block, free_reg, new_reg, free_reg_index)
 
 		append(&block.taken_regions, new_reg)
-		sort.quick_sort_proc(block.taken_regions[:], gpu_region_sort_by_offset)
+		sort.quick_sort_proc(block.taken_regions[:], _gpu_region_resource_sort_by_offset)
 
 		// Find index after sorting
 		for taken, i in block.taken_regions {
@@ -303,7 +334,7 @@ gpu_update_memory_addition :: proc(new_reg: GPU_Region_Resource, free_reg_index:
 		// and just append taken region, they we'll be sorted naturally
 		block.linear_write_offset += new_reg.size
 		append(&block.taken_regions, new_reg)
-		taken_idx = len(block.taken_regions) - 1
+		taken_region_idx = len(block.taken_regions) - 1
 	}
 
 	block.allocated += new_reg.size
@@ -312,8 +343,16 @@ gpu_update_memory_addition :: proc(new_reg: GPU_Region_Resource, free_reg_index:
 }
 
 //FIX: Make procedure decrement linear_write_offset until valid block is found, currently it stops at first one.
-gpu_update_memory_deletion :: proc(reg_idx: int, reg: GPU_Region_Resource, block: ^GPU_Memory) {
-	assert(block != nil)
+_gpu_update_block_res_destroyed :: proc(reg_idx, block_idx: int) {
+	assert(block_idx >= 0 && reg_idx >= 0)
+
+	r := get_global_state().renderer
+	assert(len(r.memory.blocks) > block_idx)
+
+	block := r.memory.blocks[block_idx]
+	assert(len(block.taken_regions) > reg_idx)
+
+	reg := block.taken_regions[reg_idx]
 	// If the region is last and linear write offset is "in front" of the block,
 	// (if I'm correct there shouldn't be a situation when a linear write offset is not at the end, and at the same time any resource is located before it)
 	// we can just pop it from taken and move back linear write offset
@@ -322,103 +361,76 @@ gpu_update_memory_deletion :: proc(reg_idx: int, reg: GPU_Region_Resource, block
 		block.linear_write_offset -= reg.size
 	} else {
 		ordered_remove(&block.taken_regions, reg_idx) // Ordered remove so we don't need to sort them
-		append(&block.free_regions, {reg.offset, reg.size})
-		sort.quick_sort_proc(block.free_regions[:], gpu_region_sort_by_offset) // We need to sort free regions tho
+		append(&block.free_regions, GPU_Region{reg.offset, reg.size})
+		sort.quick_sort_proc(block.free_regions[:], _gpu_region_sort_by_offset) // We need to sort free regions tho
 	}
 
 	block.allocated -= reg.size
 }
 
-gpu_update_resources_addition :: proc(resource: GPU_Resource_Data, handle: GPU_Resource_Handle, res_state: ^GPU_Resources_State) -> (h: GPU_User_Handle) {
+_gpu_update_resources_addition :: proc(data: GPU_Resource_Data, res_state: ^GPU_Resources_State) -> (h: GPU_Resource_Handle, err: GPU_Error) {
 	assert(res_state != nil)
-	// get the handle ID and update counter
-	internal := GPU_Internal_Handle{handle, res_state._validation_id_counter}
-	res_state._validation_id_counter += 1
 
-	index: int
-
-	// we search for any free space in handles if the flag is set to not append
-	found: bool
-	if !res_state._handles_append {
-		for h, i in res_state.handles {
-			if h == GPU_INTERNAL_HANDLE_NIL {
-				found = true
-				index = i
-			}
-		}
+	if res_state._free_list_idx == GPU_FREE_LIST_ABSENT_VALUE {
+		append(&res_state.datas, data)
+		last := len(res_state.datas) - 1
+		res_state.datas[last].handle = _gpu_generate_resource_handle(last, &res_state._validation_id_counter)
+		return res_state.datas[last].handle, nil
 	}
 
-	// if we do not found any we set it as true
-	// (if the flag was true this will just set it to true again anyway)
-	if !found {
-		res_state._handles_append = true
-	} else {
-		res_state.handles[index] = internal
-		// we do not set append flag to true here,
-		// because we don't know if there are any empty indexes ledt
+	idx := res_state._free_list_idx
+	d := res_state.datas[idx]
+	switch d.handle.id {
+	case GPU_HANDLE_LIST_END_ID_VALUE: res_state._free_list_idx = GPU_FREE_LIST_ABSENT_VALUE
+	case GPU_HANDLE_LIST_NEXT_ID_VALUE: res_state._free_list_idx = int(d.handle.index)
+	case:
+		log.warnf("Unexpected ID value encountered in handle: %v", d.handle)
+		return {}, .Unknown
 	}
 
-	if res_state._handles_append {
-		append(&res_state.handles, internal)
-		index = len(res_state.handles) - 1
-	}
+	res_state.datas[idx] = data
+	res_state.datas[idx].handle = _gpu_generate_resource_handle(idx, &res_state._validation_id_counter)
 
-	// Now we need data for user
-	user_handle := GPU_User_Handle{index, internal.validation_id}
-
-	// This shouldn't happen, so I'll check only in editor builds
-	when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] {
-		_, exists := res_state.resources_map[handle]
-		if exists {
-			log.warnf("GPU Resource with handle '%v' already exists in resources map, overwriting", reg.handle)
-		}
-	}
-
-	res_state.resources_map[reg.handle] = resource
-
-	return user_handle, true
+	return res_state.datas[idx].handle, nil
 }
 
-// Returns `GPU_Resource_Handle` for resource destroying, this procedure should be called before allocator destroy call.
-// WARN: Procedure sets handle at corespodning array index as `GPU_INTERNAL_HANDLE_NIL`, a local copy of Vulkan's handle will be returned for allocator's later usage.
-gpu_update_resources_deletion :: proc(h: GPU_User_Handle, res_state: ^GPU_Resources_State) -> (GPU_Resource_Handle, bool) {
-	assert(res_state != nil && h.index < len(res_state.handles))
-	if res_state.handles[h.index].validation_id != h.validation_id {
-		log.warnf("ID Validation failed, given handle ID '%v' does not match source handle ID '%v', aborting", h.validation_id, res_state.handles[h.index].validation_id)
+_gpu_update_resources_deletion :: proc(h: GPU_Resource_Handle, res_state: ^GPU_Resources_State) {
+	assert(_is_handle(h))
+
+	last_idx := u32(len(res_state.datas) - 1)
+	// Add to free list if not the last element
+	if h.index == last_idx {
+		res_state.datas[last_idx].handle = GPU_RESOURCE_HANDLE_NIL
+		pop(&res_state.datas)
 		return
 	}
 
-	res_handle := res_state.handles[h.index].handle
-
-	// Mark as nil and available to use
-	res_state.handles[h.index] = GPU_INTERNAL_HANDLE_NIL
-	res_state._handles_append = false
-
-	res, exists := res_state.resources_map[res_handle]
-	if !exists {
-		log.warnf("Resource with handle '%v' does not exist in resources map", res_handle)
-		return res_handle, true
+	if res_state._free_list_idx == GPU_FREE_LIST_ABSENT_VALUE {
+		res_state._free_list_idx = int(h.index)
+		res_state.datas[h.index].handle.id = GPU_HANDLE_LIST_END_ID_VALUE
+		return
 	}
 
-	// If somehow it happens, but it really shouldn't
-	// REMEBER TO NOT DELETE FOR POOLS, SINCE WE MOST LIKELY NEED THIS WHEN ALLOCATOR PERFORMS FREE ALL!!
-	if res.usage != .Pool {
-		if res.pool_elems != nil do log.warnf("The resource usage is '%v', yet pool_elems is not nil", res.usage)
-		delete(res.pool_elems)
-	}
-
-	delete_key(&res_state.resources_map, res_handle)
-	return res_handle, true
+	idx := res_state._free_list_idx
+	res_state._free_list_idx = int(h.index)
+	res_state.datas[h.index].handle = {id = GPU_HANDLE_LIST_NEXT_ID_VALUE, index = u32(idx)}
+	return
 }
 
 
-gpu_region_sort_by_offset :: proc(first, second: GPU_Region) -> int {
+_gpu_region_sort_by_offset :: proc(first, second: GPU_Region) -> int {
 	if first.offset < second.offset do return -1
 	else if first.offset > second.offset do return 1
 	else do return 0
 }
 
-gpu_update_free_region_based_on_new_addition :: proc(block: ^GPU_Memory, free_region, new_region: GPU_Region, free_region_idx: int) {
+_gpu_region_resource_sort_by_offset :: proc(first, second: GPU_Taken_Region) -> int {
+	if first.offset < second.offset do return -1
+	else if first.offset > second.offset do return 1
+	else do return 0
+}
+
+_gpu_update_free_region_based_on_new_addition :: proc(block: ^GPU_Memory_Block, free_region, new_region: GPU_Region, free_region_idx: int) {
 	assert(block != nil)
 
 	if free_region_idx < 0 {
@@ -464,15 +476,179 @@ gpu_update_free_region_based_on_new_addition :: proc(block: ^GPU_Memory, free_re
    	return
 }
 
-get_resource_handle_from_user_handle :: proc(handle: GPU_User_Handle, handles: []GPU_Internal_Handle) -> GPU_Resource_Handle {
-	if handle == GPU_USER_HANDLE_NIL do return nil
+gpu_get_resource_from_handle :: proc(handle: GPU_Resource_Handle) -> Vulkan_Resource {
+	res := get_global_state().renderer.resources
 
-	ensure(len(handles) > handle.index)
-	h := handles[handle.index]
-
-	if h.validation_id != handle.validation_id {
+	if !validate_handle(handle) {
 		return nil
 	}
 
-	return h.handle
+	data := res.datas[handle.index]
+	if handle.id != data.handle.id {
+		return nil
+	}
+
+	return data.resource
+}
+
+validate_handle :: proc{
+	validate_memory_handle,
+	validate_resource_handle,
+}
+
+validate_memory_handle :: proc(handle: GPU_Memory_Handle) -> (ok: bool) {
+	_is_handle(handle) or_return
+
+	m := get_global_state().renderer.memory
+	return m.blocks[handle.index].handle.id == handle.id
+}
+
+validate_resource_handle :: proc(handle: GPU_Resource_Handle) -> (ok: bool) {
+	_is_handle(handle) or_return
+
+	r := get_global_state().renderer.resources
+	return r.datas[handle.index].handle.id == handle.id
+}
+
+// Checks if handle ID is not special or invalid value.
+_is_handle :: proc{
+	_is_memory_handle,
+	_is_resource_handle,
+}
+
+// Checks if memory handle ID is not special or invalid value. Prefer using `is_handle`.
+_is_memory_handle :: proc(handle: GPU_Memory_Handle) -> (ok: bool) {
+	_is_handle_in_range(handle) or_return
+	if handle.id == GPU_HANDLE_LIST_END_ID_VALUE || handle.id == GPU_HANDLE_LIST_NEXT_ID_VALUE || handle == GPU_MEMORY_HANDLE_NIL || handle.id < 0 {
+		return false
+	}
+	return true
+}
+
+// Checks if resource handle ID is not special or invalid value. Prefer using `is_handle`.
+_is_resource_handle :: proc(handle: GPU_Resource_Handle) -> (ok: bool) {
+	_is_handle_in_range(handle) or_return
+	if handle.id == GPU_HANDLE_LIST_END_ID_VALUE || handle.id == GPU_HANDLE_LIST_NEXT_ID_VALUE || handle == GPU_RESOURCE_HANDLE_NIL || handle.id < 0 {
+		return false
+	}
+	return true
+}
+
+// Validates passed user handle to internal one, internal being the source of 'truth'.
+_validate_handles :: proc{
+	_validate_memory_handles,
+	_validate_resources_handles,
+}
+
+// Validates passed user memory handle to internal one, internal being the source of 'truth'. Prefer using `validate_handle`.
+_validate_memory_handles :: proc(user, internal: GPU_Memory_Handle) -> (ok: bool) {
+	_is_handle(user) or_return
+
+	return user.id == internal.id
+}
+
+// Validates passed user resource handle to internal one, internal being the source of 'truth'. Prefer using `validate_handle`.
+_validate_resources_handles :: proc(user, internal: GPU_Resource_Handle) -> (ok: bool) {
+	_is_handle(user) or_return
+
+	return user.id == internal.id
+}
+
+_is_handle_in_range :: proc{
+	_is_memory_handle_in_range,
+	_is_resource_handle_in_range,
+}
+
+_is_memory_handle_in_range :: proc(handle: GPU_Memory_Handle) -> (is: bool) {
+	r := get_state_from_context().renderer
+	when CONFIG_BUILD_VARIANT != Build_Variants[.Editor] {
+		// this shouldn't happen
+		if handle.index > GPU_MEMORY_HANDLE_INDEX_MAX {
+			log.warnf("Detected memory handle outside valid range; handle '%v' - max allowed index: %v", handle, GPU_RESOURCE_HANDLE_INDEX_MAX)
+			return false
+		}
+	}
+
+	if handle.index < 0 || int(handle.index) >= len(r.memory.blocks)  {
+		return false
+	}
+
+	return true
+}
+
+_is_resource_handle_in_range :: proc(handle: GPU_Resource_Handle) -> (is: bool) {
+	r := get_state_from_context().renderer
+	when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] {
+		// this shouldn't happen
+		if handle.index > GPU_RESOURCE_HANDLE_INDEX_MAX {
+			log.warnf("Detected resource handle outside valid range; handle '%v' - max allowed index: %v", handle, GPU_RESOURCE_HANDLE_INDEX_MAX)
+			return false
+		}
+	}
+
+	if handle.index < 0 || int(handle.index) >= len(r.resources.datas)  {
+		return false
+	}
+
+	return true
+}
+
+gpu_get_data :: proc{
+	gpu_get_resource_data,
+	gpu_get_memory_block_data,
+}
+
+gpu_get_memory_block_data :: proc(handle: GPU_Memory_Handle) -> ^GPU_Memory_Block {
+	g := get_global_state()
+	return &g.renderer.memory.blocks[handle.index]
+}
+
+gpu_get_resource_data :: proc(handle: GPU_Resource_Handle) -> ^GPU_Resource_Data {
+	g := get_global_state()
+	return &g.renderer.resources.datas[handle.index]
+}
+
+gpu_get_parent_data :: proc(handle: GPU_Resource_Handle) -> ^GPU_Memory_Block {
+	r := get_global_state().renderer
+	return &r.memory.blocks[r.resources.datas[handle.index].parent_idx]
+}
+
+gpu_flush_resource :: proc(handle: GPU_Resource_Handle) -> (success: bool) {
+	range := _gpu_get_range_from_resource(handle)
+	result := vk.FlushMappedMemoryRanges(get_global_state().renderer.core.device.handle, 1, &range)
+	if result != .SUCCESS {
+		when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] do log.errorf("Flushing memory range '%v' from handle '%v' failure: %v", range, handle, result)
+		else do log.errorf("Flushin memory range failure: %v", result)
+
+		return false
+	}
+
+	return true
+}
+
+//gpu_flush_buffers :: proc(handles: []GPU_Resource_Handles) -> (success: bool) {}
+
+_gpu_get_range_from_resource :: proc(handle: GPU_Resource_Handle) -> (range: vk.MappedMemoryRange) {
+	mem := gpu_get_parent_data(handle)
+	when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] {
+		if mem.mapped_ptr == nil {
+			log.errorf("Called '%v' but memory from passed handle does not have mapped pointer", #procedure)
+			return
+		}
+		if .HOST_VISIBLE not_in mem.flags {
+			log.errorf("Called '%v' but flag HOST_VISIBLE is absent in memory", #procedure)
+			return
+		}
+		if .HOST_COHERENT in mem.flags {
+			log.errorf("Called '%v' but flag HOST_COHERENT is present in memory", #procedure)
+			return
+		}
+	}
+	data := gpu_get_data(handle)
+	range.sType = .MAPPED_MEMORY_RANGE
+	range.memory = mem.memory
+	range.offset = data.offset
+	range.size = data.backing_size
+
+	return range
 }

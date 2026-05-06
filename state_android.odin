@@ -62,11 +62,10 @@ engine_cleanup_android :: proc(engine_state: ^Engine_Android_Global_State, procs
 
 android_logger_proc : log.Logger_Proc : proc(logger_data: rawptr, level: log.Level, text: string, options: log.Options, location := #caller_location) {
 	d := cast(^Android_Logger_Data)logger_data
-	context.allocator = d.allocator
 
 	priority: android.LogPriority
 
-	ctext := strings.clone_to_cstring(text)
+	ctext := strings.clone_to_cstring(text, d.allocator)
 
 	switch level {
 	case .Debug: priority = .DEBUG
@@ -75,7 +74,7 @@ android_logger_proc : log.Logger_Proc : proc(logger_data: rawptr, level: log.Lev
 	case .Error: priority = .ERROR
 	case .Fatal: priority = .FATAL
 	}
-	
+
 	android.__android_log_write(priority, d.ident, ctext)
 }
 
@@ -85,7 +84,7 @@ create_android_logger : Engine_Create_Logger_Proc : proc(options := DEFAULT_LOGG
 
 	d.ident = cident
 
-	size := mem.Kilobyte * 64
+	size := 4 * mem.Kilobyte
 
 	mem.scratch_init(&d.scratch, size, allocator)
 	d.allocator = mem.scratch_allocator(&d.scratch)
@@ -117,11 +116,11 @@ handle_android_input : Proc_Handle_Android_Input : proc "c" (app: ^android.andro
 	return 0
 }
 
-get_android_global_state :: proc() -> ^Engine_Android_Global_State {
-	if context.user_ptr == nil do return nil
+get_state_from_context_android :: proc() -> ^Engine_Android_Global_State {
+	assert(context.user_ptr != nil)
 
-	global := cast(^Engine_Global_State)context.user_ptr
-	if global.platform_context == nil do return nil
+	g := cast(^Engine_Global_State)context.user_ptr
+	assert(g.platform_context != nil)
 
-	return cast(^Engine_Android_Global_State)global.platform_context
+	return cast(^Engine_Android_Global_State)g.platform_context
 }

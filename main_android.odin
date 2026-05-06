@@ -5,35 +5,39 @@ import "base:runtime"
 
 import android "./androidglue/ndkbindings"
 import "core:log"
+import "core:slice"
 
 import vk "vendor:vulkan"
 
-TRI_DATA := [3]Triangle_Vertex {
-	{position = {0, 0.5}, color = {1, 0, 0, 1}},
-	{position = {-0.5, -0.5}, color = {0, 1, 0, 1}},
-	{position = {0.5, -0.5}, color = {0, 0, 1, 1}},
-}
-
 @(export)
 android_main :: proc "c" (android_app_state: ^android.android_app) {
-	state: Engine_Android_Global_State
+	context = runtime.default_context()
+	state := new(Engine_Android_Global_State, runtime.heap_allocator())
+	defer free(state, runtime.heap_allocator())
+	context = engine_init_android(android_app_state, state)
 
-	one_time_update := true
-	context = init_android_state(android_app_state, &state)
+	tri:  [3]Triangle_Vertex
+	tri[0].color = {1, 0, 0, 1}
+	tri[0].position = {0, 0.5}
 
-	for engine_is_running(&state) {
+	tri[1].color = {0, 1, 0, 1}
+	tri[1].position = {-0.5, -0.5}
+
+	tri[2].color = {0, 0, 1, 1}
+	tri[2].position = {0.5, -0.5}
+	context = init_android_state(android_app_state, state)
+
+	for engine_is_running(state) {
 		context = state.app_context.ctx
-		log.infof("Current frame index: %v", state.current_frame_index)
 
-		engine_poll_events(&state)
+		engine_poll_events(state)
 
 		if .Focus in state.flags && .Rendering_Ready in state.flags {
 			engine_process_input()
 
-			engine_update(&state, &TRI_DATA, size_of(TRI_DATA), one_time_update)
-			if one_time_update do one_time_update = false
+			engine_update(raw_data(tri[:]), slice.size(tri[:]), true)
 
-			res := engine_draw_frame(&state, state.current_frame_index)
+			res := engine_draw_frame(state, state.current_frame_index)
 
 			if res == vk.Result.SUCCESS {
 				state.current_frame_index =
@@ -59,20 +63,13 @@ handle_android_cmd: Proc_Handle_Anroid_CMD : proc "c" (
 
 	#partial switch cmd {
 	case .START:
-		log.info("Android CMD: START")
-		context = engine_init_android(app, state)
 		state.flags += {.Engine_Initalized}
-
 	case .INIT_WINDOW:
 		log.info("Android CMD: INIT_WINDOW - Initializing Renderer")
 		if app.window != nil {
-			// Inicjalizujemy renderer dopiero gdy mamy fizyczne okno
 			success := engine_renderer_init(state)
 			if success {
 				state.flags += {.Rendering_Ready}
-				log.info("Renderer Ready")
-				// Opcjonalnie: narysuj pierwszą klatkę natychmiast
-				engine_draw_frame(state, 0)
 			} else {
 				log.error("Renderer initialization failed")
 				android.ANativeActivity_finish(app.activity)
@@ -119,7 +116,7 @@ android_poll_events :: proc(engine_state: ^Engine_Android_Global_State) {
 	source: ^android.android_poll_source
 
 	// If app is not active we "sleep" to not drain the battery
-	timeout: i32 = .Focus in engine_state.flags ? POLL : SLEEP
+	timeout: i32 = POLL //.Focus in engine_state.flags ? POLL : SLEEP
 	// Process all events here
 	// TODO: Add input queue if input will be handled to not
 	for {

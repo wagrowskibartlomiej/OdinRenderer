@@ -1,5 +1,6 @@
 package engine
 
+import "core:math/rand"
 import vk "vendor:vulkan"
 
 import "base:runtime"
@@ -43,17 +44,20 @@ engine_renderer_init :: proc(state: ^Engine_Global_State) -> (success: bool) {
 		return
 	}
 
-	success = gpu_initialize_memory_manager(&state.renderer.core, &state.renderer.memory)
+	gpu_initalize_memory_state(&state.renderer.memory)
+	gpu_initalize_resources(&state.renderer.resources)
+	gpu_allocate_default_memory_blocks()
+
+	success = init_frame_resources(&state.renderer.dyn, &state.renderer.core)
 	success or_return
 
-	success = init_frame_resources(&state.renderer.dyn, &state.renderer.core, &state.renderer.memory)
-	success or_return
 
 	return true
 }
 engine_renderer_cleanup :: proc(state: ^Engine_Global_State) {
-	cleanup_frame_resources(&state.renderer.core, &state.renderer.dyn, &state.renderer.memory)
-	gpu_cleanup_memory_manager(&state.renderer.core, &state.renderer.memory)
+	cleanup_frame_resources(&state.renderer.core, &state.renderer.dyn)
+	gpu_cleanup_resources(&state.renderer.resources)
+	gpu_cleanup_memory_state(state.renderer.memory)
 	cleanup_vulkan(&state.renderer)
 	cleanup_window(&state.window)
 }
@@ -72,8 +76,57 @@ engine_is_running :: proc(state: ^Engine_Global_State) -> bool {
 
 engine_process_input :: proc() {}
 
-engine_update :: proc(state: ^Engine_Global_State, data: rawptr, size: int, update: bool) {
-	if update do move_data_to_vertex_buffer(&state.renderer.core, &state.renderer.dyn, data, size)
+engine_update :: proc(data: rawptr, size: int, update: bool) {
+	d := ([^]Triangle_Vertex)(data)[:3]
+	d[0].color = {rand.float32(), rand.float32(), rand.float32(), 1}
+	d[1].color = {rand.float32(), rand.float32(), rand.float32(), 1}
+	d[2].color = {rand.float32(), rand.float32(), rand.float32(), 1}
+
+	if !update {
+		return
+	}
+
+	r := get_global_state().renderer
+	actions, success := gpu_move_data_to_buffer(data, size, r.dyn.vertex, r.dyn.staging)
+	if !success {
+		log.errorf("Failed to update vertex buffer")
+		return
+	}
+
+	if .Flush_Destination in actions {
+		success = gpu_flush_resource(r.dyn.vertex)
+		if !success {
+			log.errorf("Failed to flush vertex buffer")
+		}
+	}
+
+	if .Flush_Staging in actions {
+		success = gpu_flush_resource(r.dyn.staging.(Staging_Buffer).handle)
+		if !success {
+			log.errorf("Failed to flush staging buffer")
+		}
+	}
+
+	if .Submit_Cmd_Buffer in actions {
+		// TODO: Check for queue transfer ownership, right now it's ignored cause we use only graphics
+		s := r.dyn.staging.?
+		graphics := r.core.device.graphics
+		vk.QueueWaitIdle(graphics)
+		submit_info := vk.SubmitInfo{
+			sType = .SUBMIT_INFO,
+			commandBufferCount = 1,
+			pCommandBuffers = &s.cmd_buff,
+			/*
+			Since we're not using separate transfer queue, we ignore these
+			pSignalSemaphores = &s.sem,
+			signalSemaphoreCount = 1,
+			*/
+		}
+		result := vk.QueueSubmit(graphics, 1, &submit_info, s.fence)
+		if result != .SUCCESS {
+			log.errorf("Queue submition for buffer copy failed: %v", result)
+		}
+	}
 }
 engine_draw_frame :: proc(state: ^Engine_Global_State, frame_index: int, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> vk.Result {
 	res := draw_frame(&state.renderer.core, &state.renderer.dyn, state.window.handle, frame_index, allocator, callbacks)
