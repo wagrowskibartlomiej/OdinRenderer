@@ -1,7 +1,6 @@
 package engine
 
 import "core:c"
-import "core:log"
 import "core:slice"
 import "vendor:glfw"
 
