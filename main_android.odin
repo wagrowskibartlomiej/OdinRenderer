@@ -37,7 +37,7 @@ android_main :: proc "c" (android_app_state: ^android.android_app) {
 
 		if android_can_draw(engine_state) {
 			engine_update_gpu(raw_data(tri[:]), slice.size(tri[:]), true)
-			engine_draw_frame(engine_state, engine_state.current_frame_index)
+			engine_draw_frame(engine_state, engine_state.renderer.current_frame_index)
 			engine_update_current_frame_idx(engine_state)
 		}
 	}

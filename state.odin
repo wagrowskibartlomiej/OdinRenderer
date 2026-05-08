@@ -17,7 +17,6 @@ Engine_Global_State :: struct {
 	window: Window_State,
 	renderer: Renderer_State,
 	time: Time_State,
-	current_frame_index: int,
 	platform_context,
 	user_data: rawptr,
 }
