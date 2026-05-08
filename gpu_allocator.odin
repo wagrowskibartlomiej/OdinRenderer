@@ -439,7 +439,7 @@ _gpu_bind_buffer_memory :: proc(device: vk.Device, buffer: vk.Buffer, memory: vk
 // If `adjust_for_mapped_range` is set to true, requirements need to be adjusted to be compliant with physical device limit `nonCoherentAtomSize` if mapping is desired.
 _gpu_find_compatibile_memory_index :: proc(memory_blocks: []GPU_Memory_Block, category: GPU_Memory_Resource_Category, requirements: vk.MemoryRequirements, flags: vk.MemoryPropertyFlags, mappable: bool, start_from := 0) -> (index: int, adjust_for_mapped_range: bool) {
     for i in start_from ..< len(memory_blocks) {
-        if memory_blocks[i].category != category || !_gpu_check_flags_support(memory_blocks[i].flags_idx, requirements.memoryTypeBits) || flags & memory_blocks[i].flags != flags do continue
+        if memory_blocks[i].category != category || !_gpu_check_flags_support(memory_blocks[i].flags_idx, requirements.memoryTypeBits) || flags & memory_blocks[i].flags != flags || mappable && memory_blocks[i].mapped_ptr == nil do continue
 
         if mappable && .HOST_COHERENT not_in memory_blocks[i].flags {
         	return i, true

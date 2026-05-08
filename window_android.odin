@@ -6,7 +6,7 @@ import android "androidglue/ndkbindings"
 
 // Retrieves an ANatvieWindow handle. Prefer `create_window`.
 retrieve_android_window :: proc(window: ^Window_State) -> (success: bool) {
-	app := get_state_from_context_android().app_ptr
+	app := get_android_global_state().app_ptr
 	if app == nil {
 		log.errorf("Android App was nil, when expected a valid pointer")
 		return false

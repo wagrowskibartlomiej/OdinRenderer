@@ -27,7 +27,8 @@ Renderer_State :: struct {
 	core: Core_Vk_State,
 	dyn: Dynamic_Vk_State,
 	memory: GPU_Memory_State,
-	resources: GPU_Resources_State
+	resources: GPU_Resources_State,
+	current_frame_index: int,
 }
 
 Core_Vk_State :: struct {

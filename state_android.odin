@@ -19,23 +19,24 @@ Engine_Android_Global_State :: struct {
 	cmd_proc: Proc_Handle_Anroid_CMD,
 	input_proc: Proc_Handle_Android_Input,
 	flags: Engine_Android_Flags,
-	current_frame_index: int,
 }
 
 Engine_Android_Flag :: enum {
-	Engine_Initalized,
-	Rendering_Ready,
 	Focus,
+	Window_Ready,
+	Renderer_Initalized,
 }
 Engine_Android_Flags :: bit_set[Engine_Android_Flag]
 
 Android_Logger_Data :: struct {
-	scratch: mem.Scratch_Allocator,
+	arena: mem.Arena,
+	backing: []byte,
 	allocator: mem.Allocator,
 	ident: cstring,
+	missed_logs: bool,
 }
-// Called first at android entry point to assign all pointers and context with pointer to global state
-init_android_state :: proc "c" (android_app_state: ^android.android_app, engine_state: ^Engine_Android_Global_State) -> runtime.Context {
+
+engine_connect_andorid_with_state :: proc "c" (android_app_state: ^android.android_app, engine_state: ^Engine_Android_Global_State) {
 	engine_state.cmd_proc = handle_android_cmd
 	engine_state.input_proc = handle_android_input
 	engine_state.app_ptr = android_app_state
@@ -44,20 +45,36 @@ init_android_state :: proc "c" (android_app_state: ^android.android_app, engine_
 	android_app_state.userData = engine_state
 	android_app_state.onAppCmd = engine_state.cmd_proc
 	android_app_state.onInputEvent = engine_state.input_proc
-
-	// We need access to global state
-	context = {user_ptr = engine_state}
-	engine_state.app_context.ctx = context
-	return context
 }
 
 // Wrapper for `engine_init` to set values for android like Android's CMD callback etc.
-engine_init_android :: proc "contextless" (android_app_state: ^android.android_app, engine_state: ^Engine_Android_Global_State, procs := Engine_State_Create_Procs{ctx = {create_logger = create_android_logger, assert_proc = android_assert_proc}}) -> runtime.Context {
-	return engine_init(engine_state, procs)
+engine_init_android :: proc "contextless" (android_app_state: ^android.android_app, procs := Engine_State_Create_Procs{ctx = {create_logger = create_android_logger, assert_proc = android_assert_proc}}) -> (runtime.Context, ^Engine_Android_Global_State) {
+	context = runtime.default_context()
+	state := new(Engine_Android_Global_State, runtime.heap_allocator())
+	engine_connect_andorid_with_state(android_app_state, state)
+	return engine_init(state, procs), state
 }
 
+// Wrapper for `engine_renderer_init` to set flags for Android state.
+engine_renderer_init_android :: proc(engine_state: ^Engine_Android_Global_State) {
+	success := engine_renderer_init(engine_state)
+	if !success {
+		log.panic("Engine renderer initalization failed")
+	}
+	engine_state.flags += {.Renderer_Initalized}
+}
+
+// Wrapper for `engine_renderer_cleanup` to unset flags for Android state.
+engine_renderer_cleanup_android :: proc(engine_state: ^Engine_Android_Global_State) {
+	engine_renderer_cleanup(engine_state)
+	engine_state.flags -= {.Renderer_Initalized}
+}
+
+
 engine_cleanup_android :: proc(engine_state: ^Engine_Android_Global_State, procs := Engine_State_Cleanup_Procs{ctx = {cleanup_logger = cleanup_android_logger}}) {
+	if .Renderer_Initalized in engine_state.flags do engine_renderer_cleanup_android(engine_state)
 	engine_cleanup(engine_state, procs)
+	free(engine_state, runtime.heap_allocator())
 }
 
 android_logger_proc : log.Logger_Proc : proc(logger_data: rawptr, level: log.Level, text: string, options: log.Options, location := #caller_location) {
@@ -65,7 +82,16 @@ android_logger_proc : log.Logger_Proc : proc(logger_data: rawptr, level: log.Lev
 
 	priority: android.LogPriority
 
-	ctext := strings.clone_to_cstring(text, d.allocator)
+	ctext, err := strings.clone_to_cstring(text, d.allocator)
+	if err == .Out_Of_Memory {
+		free_all(d.allocator)
+		ctext, err = strings.clone_to_cstring(text, d.allocator)
+		if err != nil {
+			d.missed_logs = true
+		}
+	} else if err != nil {
+		d.missed_logs = true
+	}
 
 	switch level {
 	case .Debug: priority = .DEBUG
@@ -80,14 +106,16 @@ android_logger_proc : log.Logger_Proc : proc(logger_data: rawptr, level: log.Lev
 
 create_android_logger : Engine_Create_Logger_Proc : proc(options := DEFAULT_LOGGER_OPTIONS, ident := DEFAULT_LOGGER_IDENT, default_configuration := true, allocator := context.allocator, data: rawptr) -> log.Logger {
 	d := new(Android_Logger_Data, allocator)
+
 	cident := strings.clone_to_cstring(ident, allocator)
 
 	d.ident = cident
 
 	size := 4 * mem.Kilobyte
 
-	mem.scratch_init(&d.scratch, size, allocator)
-	d.allocator = mem.scratch_allocator(&d.scratch)
+	d.backing = make([]byte, mem.Kilobyte, allocator)
+	mem.arena_init(&d.arena, d.backing)
+	d.allocator = mem.arena_allocator(&d.arena)
 
 	return {procedure = android_logger_proc, data = d}
 }
@@ -95,7 +123,8 @@ create_android_logger : Engine_Create_Logger_Proc : proc(options := DEFAULT_LOGG
 cleanup_android_logger : Engine_Cleanup_Logger_Proc : proc(logger: log.Logger, allocator := context.allocator, data: rawptr) {
 	d := cast(^Android_Logger_Data)logger.data
 
-	mem.scratch_destroy(&d.scratch)
+	delete(d.ident, allocator)
+	delete(d.backing, allocator)
 
 	free(d, allocator)
 }
@@ -116,11 +145,8 @@ handle_android_input : Proc_Handle_Android_Input : proc "c" (app: ^android.andro
 	return 0
 }
 
-get_state_from_context_android :: proc() -> ^Engine_Android_Global_State {
-	assert(context.user_ptr != nil)
-
-	g := cast(^Engine_Global_State)context.user_ptr
+get_android_global_state :: proc() -> ^Engine_Android_Global_State {
+	g := get_global_state()
 	assert(g.platform_context != nil)
-
 	return cast(^Engine_Android_Global_State)g.platform_context
 }

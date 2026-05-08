@@ -68,6 +68,7 @@ Staging_Buffer :: struct {
 	sem: vk.Semaphore, // semaphore for queue ownership transfer, e.g. if using async transfer queue
 	pool: vk.CommandPool,
 	cmd_buff: vk.CommandBuffer,
+	updated: bool,
 }
 
 VK_TIMEOUT_MAX :: max(u64)
@@ -384,7 +385,6 @@ init_frame_resources :: proc(frame: ^Dynamic_Vk_State, init: ^Core_Vk_State, all
 	frame.vertex = create_vertex_buffer() or_return
 
 	parent := gpu_get_parent_data(frame.vertex)
-	log.debugf("Parent: %v", parent)
 	if parent.mapped_ptr == nil {
 		frame.staging = create_staging_buffer() or_return
 	}
@@ -422,6 +422,14 @@ draw_frame :: proc(init: ^Core_Vk_State, frame: ^Dynamic_Vk_State, window_handle
 		{.COLOR_ATTACHMENT_OUTPUT},
 	}
 
+	// for now updating is simple, we're only updating vertex buffer
+	insert_barrier: bool
+	s, ok := &frame.staging.?
+	if ok {
+		insert_barrier = s.updated
+		s.updated = false
+	}
+
 	vk.WaitForFences(init.device.handle, 1, &can_record_frame_sync, true, VK_TIMEOUT_MAX)
 
 	img_index: u32
@@ -434,7 +442,6 @@ draw_frame :: proc(init: ^Core_Vk_State, frame: ^Dynamic_Vk_State, window_handle
 	case .SUBOPTIMAL_KHR: log.warn("Aquire next image reports suboptimal")
 	case: log.panicf("Image acquiring failure: %v", res)
 	}
-
 
 	vk.ResetFences(init.device.handle, 1, &can_record_frame_sync)
 
@@ -459,8 +466,17 @@ draw_frame :: proc(init: ^Core_Vk_State, frame: ^Dynamic_Vk_State, window_handle
 	assert(validate_handle(frame.vertex))
 	vertex := gpu_get_resource_from_handle(frame.vertex).(vk.Buffer)
 
-	vk.DeviceWaitIdle(init.device.handle)
+	vertex_barrier := vk.BufferMemoryBarrier{
+		sType = .BUFFER_MEMORY_BARRIER,
+		buffer = vertex,
+		offset = 0,
+		size = vk.DeviceSize(vk.WHOLE_SIZE),
+		srcAccessMask = {.TRANSFER_WRITE},
+		dstAccessMask = {.VERTEX_ATTRIBUTE_READ},
+	}
+
 	begin_command_buffer(cmd_buffer)
+	if insert_barrier do vk.CmdPipelineBarrier(cmd_buffer, {.TRANSFER}, {.VERTEX_INPUT}, nil, 0, nil, 1, &vertex_barrier, 0, nil)
 	vk.CmdBindVertexBuffers(cmd_buffer, 0, 1, &vertex, &offset)
 	vk.CmdBindPipeline(cmd_buffer, .GRAPHICS, init.pipelines.triangle.handle)
 	vk.CmdBeginRenderPass(cmd_buffer, &beg_info, .INLINE)

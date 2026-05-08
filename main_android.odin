@@ -1,20 +1,16 @@
 #+build linux
 package engine
 
-import "base:runtime"
 
 import android "./androidglue/ndkbindings"
-import "core:log"
 import "core:slice"
-
-import vk "vendor:vulkan"
 
 @(export)
 android_main :: proc "c" (android_app_state: ^android.android_app) {
-	context = runtime.default_context()
-	state := new(Engine_Android_Global_State, runtime.heap_allocator())
-	defer free(state, runtime.heap_allocator())
-	context = engine_init_android(android_app_state, state)
+	engine_state: ^Engine_Android_Global_State
+
+	context, engine_state = engine_init_android(android_app_state)
+	defer engine_cleanup_android(engine_state)
 
 	tri:  [3]Triangle_Vertex
 	tri[0].color = {1, 0, 0, 1}
@@ -25,85 +21,51 @@ android_main :: proc "c" (android_app_state: ^android.android_app) {
 
 	tri[2].color = {0, 0, 1, 1}
 	tri[2].position = {0.5, -0.5}
-	context = init_android_state(android_app_state, state)
 
-	for engine_is_running(state) {
-		context = state.app_context.ctx
+	for engine_is_running(engine_state) {
+		engine_calculate_delta(engine_state)
+		engine_poll_events(engine_state)
 
-		engine_poll_events(state)
+		if android_should_initalize_renderer(engine_state) {
+			engine_renderer_init_android(engine_state)
+		}
+	 	else if android_should_cleanup_renderer(engine_state) {
+			engine_renderer_cleanup_android(engine_state)
+		}
 
-		if .Focus in state.flags && .Rendering_Ready in state.flags {
-			engine_process_input()
+		if .Focus in engine_state.flags do engine_process_input()
 
-			engine_update(raw_data(tri[:]), slice.size(tri[:]), true)
-
-			res := engine_draw_frame(state, state.current_frame_index)
-
-			if res == vk.Result.SUCCESS {
-				state.current_frame_index =
-					(state.current_frame_index + 1) %
-					get_engine_configuration().settings.Frames_In_Flight
-			} else {
-				log.errorf("Draw frame failed: %v", res)
-			}
+		if android_can_draw(engine_state) {
+			engine_update_gpu(raw_data(tri[:]), slice.size(tri[:]), true)
+			engine_draw_frame(engine_state, engine_state.current_frame_index)
+			engine_update_current_frame_idx(engine_state)
 		}
 	}
+
+}
+
+android_should_initalize_renderer :: proc(engine_state: ^Engine_Android_Global_State) -> bool {
+	return .Window_Ready in engine_state.flags && .Renderer_Initalized not_in engine_state.flags
+}
+android_should_cleanup_renderer :: proc(engine_state: ^Engine_Android_Global_State) -> bool {
+	return .Window_Ready not_in engine_state.flags && .Renderer_Initalized in engine_state.flags
+}
+android_can_draw :: proc(engine_state: ^Engine_Android_Global_State) -> bool {
+	return .Window_Ready in engine_state.flags && .Renderer_Initalized in engine_state.flags
 }
 
 handle_android_cmd: Proc_Handle_Anroid_CMD : proc "c" (
 	app: ^android.android_app,
 	cmd: android.AppCmd,
 ) {
-	assert_contextless(app != nil)
-
+	assert_contextless(app != nil && app.userData != nil, "App pointer and global state pointer needs to be set")
 	state := cast(^Engine_Android_Global_State)app.userData
-	assert_contextless(state != nil)
-
-	context = state.app_context.ctx
 
 	#partial switch cmd {
-	case .START:
-		state.flags += {.Engine_Initalized}
-	case .INIT_WINDOW:
-		log.info("Android CMD: INIT_WINDOW - Initializing Renderer")
-		if app.window != nil {
-			success := engine_renderer_init(state)
-			if success {
-				state.flags += {.Rendering_Ready}
-			} else {
-				log.error("Renderer initialization failed")
-				android.ANativeActivity_finish(app.activity)
-			}
-		}
-
-	case .TERM_WINDOW:
-		log.info("Android CMD: TERM_WINDOW - Cleaning up Renderer")
-		state.flags -= {.Rendering_Ready}
-		engine_renderer_cleanup(state)
-
-	case .GAINED_FOCUS:
-		log.info("Android CMD: GAINED_FOCUS")
-		state.flags += {.Focus}
-
-	case .LOST_FOCUS:
-		log.info("Android CMD: LOST_FOCUS")
-		state.flags -= {.Focus}
-
-	case .DESTROY:
-		log.info("Android CMD: DESTROY")
-		engine_cleanup_android(state)
-		state.flags -= {.Engine_Initalized}
-
-	case .WINDOW_REDRAW_NEEDED:
-		if .Rendering_Ready in state.flags {
-			engine_draw_frame(state, state.current_frame_index)
-		}
-
-	case .WINDOW_RESIZED, .CONTENT_RECT_CHANGED:
-		log.info("Android CMD: Resize/Content Rect Changed")
-
-	case:
-		log.warnf("Unhandled Android CMD: %v", cmd)
+	case .INIT_WINDOW: if app.window != nil do state.flags += {.Window_Ready}
+	case .TERM_WINDOW: state.flags -= {.Window_Ready}
+	case .GAINED_FOCUS: state.flags += {.Focus}
+	case .LOST_FOCUS: state.flags -= {.Focus}
 	}
 }
 
@@ -115,12 +77,9 @@ android_poll_events :: proc(engine_state: ^Engine_Android_Global_State) {
 	events: i32
 	source: ^android.android_poll_source
 
-	// If app is not active we "sleep" to not drain the battery
-	timeout: i32 = POLL //.Focus in engine_state.flags ? POLL : SLEEP
-	// Process all events here
-	// TODO: Add input queue if input will be handled to not
+	timeout: i32 = POLL //POLL if .Window_Ready in engine_state.flags else SLEEP
 	for {
-		ident := android.ALooper_pollAll(timeout, nil, &events, cast(^rawptr)&source)
+		ident := android.ALooper_pollOnce(timeout, nil, &events, cast(^rawptr)&source)
 		if ident < 0 do break
 
 		if source != nil do source.process(engine_state.app_ptr, source)
@@ -128,5 +87,5 @@ android_poll_events :: proc(engine_state: ^Engine_Android_Global_State) {
 }
 
 android_is_running :: proc(state: ^Engine_Android_Global_State) -> bool {
-	return state.app_ptr.destroyRequested == 0 ? true : false
+	return true if state.app_ptr.destroyRequested == 0 else false
 }

@@ -85,12 +85,17 @@ align_up_pow_2 :: proc(value, alignment: u64) -> u64 {
 	return (value + alignment - 1) & ~(alignment - 1)
 }
 
-get_state_from_context :: proc() -> ^Engine_Global_State {
+get_global_state :: proc() -> ^Engine_Global_State {
 	assert(context.user_ptr != nil)
 	return cast(^Engine_Global_State) context.user_ptr
 }
 
-// Usually should only be used for logging purposes.
+/*
+	- Returns bytes in highest unit with correspoding string symbol.
+	- Which unit will be returned depends on that if there are enough bytes to have at least 1 whole of a given unit.
+	- Maximum converted unit is a Exabyte.
+	- Usually should only be used for logging purposes.
+*/
 logs_simplify_bytes :: proc(bytes: u64) -> (num: f64, symbol: string) {
 	switch bytes {
 	case 0..< 1 * mem.Kilobyte:

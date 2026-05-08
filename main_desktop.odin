@@ -16,7 +16,6 @@ main :: proc () {
 	defer engine_renderer_cleanup(engine_state)
 	if !success do return
 
-	one_time_send := true
 	tri:  [3]Triangle_Vertex
 
 	tri[0].color = {1, 0, 1, 1}
@@ -31,15 +30,14 @@ main :: proc () {
 
 	current_frame: int
 	for engine_is_running(engine_state) {
+		engine_calculate_delta(engine_state)
 		engine_poll_events(engine_state)
 
 		engine_process_input()
-		engine_update(raw_data(tri[:]), slice.size(tri[:]), true)
+		engine_update_gpu(raw_data(tri[:]), slice.size(tri[:]), true)
 		engine_draw_frame(engine_state, current_frame)
 
-		if one_time_send do one_time_send = false
-
-		current_frame = (current_frame + 1) % get_engine_configuration().settings.Frames_In_Flight
+		engine_update_current_frame_idx(engine_state)
 	}
 
 }

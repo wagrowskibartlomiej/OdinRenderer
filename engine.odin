@@ -1,10 +1,13 @@
 package engine
 
-import "core:math/rand"
-import vk "vendor:vulkan"
 
 import "base:runtime"
+
 import "core:log"
+import "core:time"
+import "core:math/rand"
+
+import vk "vendor:vulkan"
 
 engine_init :: proc "contextless" (state: ^Engine_Global_State, procs := Engine_State_Create_Procs{}) -> (ctx: runtime.Context) {
 	context = setup_engine_state(state, procs)
@@ -76,15 +79,25 @@ engine_is_running :: proc(state: ^Engine_Global_State) -> bool {
 
 engine_process_input :: proc() {}
 
-engine_update :: proc(data: rawptr, size: int, update: bool) {
-	d := ([^]Triangle_Vertex)(data)[:3]
-	d[0].color = {rand.float32(), rand.float32(), rand.float32(), 1}
-	d[1].color = {rand.float32(), rand.float32(), rand.float32(), 1}
-	d[2].color = {rand.float32(), rand.float32(), rand.float32(), 1}
-
+engine_update_logic :: proc() {}
+engine_update_gpu :: proc(data: rawptr, size: int, update: bool) {
 	if !update {
 		return
 	}
+	@(static) counter: time.Duration
+	counter += get_frame_time()
+	if counter < time.Millisecond * 300 {
+		return
+	} else {
+		counter = 0
+	}
+
+	d := ([^]Triangle_Vertex)(data)[:3]
+	rgb := [3]f32{rand.float32(), rand.float32(), rand.float32()}
+
+	d[0].color.rgb = rgb
+	d[1].color.rgb = rgb
+	d[2].color.rgb = rgb
 
 	r := get_global_state().renderer
 	actions, success := gpu_move_data_to_buffer(data, size, r.dyn.vertex, r.dyn.staging)
@@ -111,7 +124,6 @@ engine_update :: proc(data: rawptr, size: int, update: bool) {
 		// TODO: Check for queue transfer ownership, right now it's ignored cause we use only graphics
 		s := r.dyn.staging.?
 		graphics := r.core.device.graphics
-		vk.QueueWaitIdle(graphics)
 		submit_info := vk.SubmitInfo{
 			sType = .SUBMIT_INFO,
 			commandBufferCount = 1,
@@ -137,4 +149,19 @@ engine_draw_frame :: proc(state: ^Engine_Global_State, frame_index: int, allocat
 	}
 
 	return res
+}
+
+engine_update_current_frame_idx :: proc(state: ^Engine_Global_State) {
+	assert(state != nil)
+	state.renderer.current_frame_index = (state.renderer.current_frame_index + 1) % get_engine_configuration().settings.Frames_In_Flight
+}
+
+engine_calculate_delta :: proc(state: ^Engine_Global_State) {
+	assert(state != nil)
+
+	n := time.now()
+
+	state.time.frame_diff = time.diff(state.time.last_frame_start, n)
+	state.time.delta = time.duration_seconds(state.time.frame_diff)
+	state.time.last_frame_start = n
 }

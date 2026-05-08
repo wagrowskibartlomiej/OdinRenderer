@@ -3,8 +3,6 @@ package engine
 import "core:mem"
 import "core:log"
 import "core:sort"
-import "core:c/libc"
-import "core:c"
 
 import "base:runtime"
 
@@ -134,7 +132,7 @@ gpu_destroy :: proc(handle: GPU_Resource_Handle) -> GPU_Error {
 		return .Unknown
 	}
 
-	data := r.datas[handle.id]
+	data := r.datas[handle.index]
 	if !_validate_handles(handle, data.handle) {
 		return .Unknown
 	}
@@ -152,12 +150,19 @@ gpu_destroy :: proc(handle: GPU_Resource_Handle) -> GPU_Error {
 	return nil
 }
 
+/*
+	I do not think it's a good idea to unify these copy procs cause of different behaviour that is expected from a caller,
+	but idk really, short version seems really handy at some times
+*/
+
+
+// WARN: Before usage read what exactly each of the procedure does, use only for shorthand purposes.
 gpu_copy :: proc{
 	gpu_copy_buffers,
 	gpu_copy_to_mappable_buffer,
 }
 
-// Procedure expects that caller will manage submition and call to `vk.BeginCommandBuffer`.
+// Procedure expects that caller will manage submition, synchrozniation of barriers/semaphores and a call to `vk.BeginCommandBuffer`.
 gpu_copy_buffers :: proc(cmd: vk.CommandBuffer, dst, src: GPU_Resource_Handle, regions: []vk.BufferCopy) -> (success: bool) {
 	dst_buffer := gpu_get_resource_from_handle(dst).(vk.Buffer) or_return
 	src_buffer := gpu_get_resource_from_handle(src).(vk.Buffer) or_return
@@ -166,6 +171,7 @@ gpu_copy_buffers :: proc(cmd: vk.CommandBuffer, dst, src: GPU_Resource_Handle, r
 	return true
 }
 
+// Procedure expects that caller will manage synchronization.
 gpu_copy_to_mappable_buffer :: proc(dst: GPU_Resource_Handle, ptr: rawptr, size: int) -> (flush_required: bool, success: bool) {
 	r := get_global_state().renderer
 
@@ -176,6 +182,7 @@ gpu_copy_to_mappable_buffer :: proc(dst: GPU_Resource_Handle, ptr: rawptr, size:
 	block := r.memory.blocks[data.parent_idx]
 
 	if block.mapped_ptr == nil || data.data_size < vk.DeviceSize(size) {
+		when CONFIG_VERBOSE_LOG do log.warnf("Called '%v', but dst (%v) doesn't meet requirements (mapped: %v, size: %v %v vs %v %v)", #procedure, dst, block.mapped_ptr, logs_simplify_bytes(u64(data.data_size)), logs_simplify_bytes(u64(size)))
 		return
 	}
 
@@ -197,14 +204,18 @@ GPU_Data_Transfer_Action :: enum {
 }
 GPU_Data_Transfer_Action_Flags :: bit_set[GPU_Data_Transfer_Action]
 
-// Moves data to gpu buffer passed in `dst` param. If possible, copies directly to mapped, if not tries to use staging buffer.
-// If procedure needs to use stagin buffer, the command buffer passed in `staging` is used for recording and procedure calls `begin_command_buffer` and `end_command_buffer` on it.
-// Also it's up to the caller to submit staging command buffer.
-// Returned `actions` param idicates which actions are required to properly synchronize memory access.
+/*
+	- Moves data to gpu buffer passed in `dst` param. If possible, copies directly to mapped, if not tries to use staging buffer.
+	- If procedure needs to use stagin buffer, the command buffer passed in `staging` is used for recording and procedure calls `begin_command_buffer` and `end_command_buffer` on it.
+	- It's up to the caller to submit staging command buffer and to synchronize `vkCmdCopyBuffer`.
+	- Returned `actions` param idicates which actions are required to properly synchronize memory access.
+	- WARN: In current state **DOES NOT** support queue ownership transfer or any other queue other than graphics.
+*/
 gpu_move_data_to_buffer :: proc(data: rawptr, size: int, dst: GPU_Resource_Handle, staging: Maybe(Staging_Buffer)) -> (actions: GPU_Data_Transfer_Action_Flags, success: bool) {
 	r := get_global_state().renderer
 	parent_idx := r.resources.datas[dst.index].parent_idx
 
+	//TODO: Now we're only using graphics queue for transfers and only exclusive resources, but this needs to change
 	if r.memory.blocks[parent_idx].mapped_ptr != nil {
 		flush_required := gpu_copy_to_mappable_buffer(dst, data, size) or_return
 		if flush_required {
@@ -396,6 +407,9 @@ _gpu_update_resources_addition :: proc(data: GPU_Resource_Data, res_state: ^GPU_
 
 _gpu_update_resources_deletion :: proc(h: GPU_Resource_Handle, res_state: ^GPU_Resources_State) {
 	assert(_is_handle(h))
+	if len(res_state.datas) <= 0 {
+		return
+	}
 
 	last_idx := u32(len(res_state.datas) - 1)
 	// Add to free list if not the last element
@@ -405,6 +419,7 @@ _gpu_update_resources_deletion :: proc(h: GPU_Resource_Handle, res_state: ^GPU_R
 		return
 	}
 
+	assert(h.index >= 0 && h.index < u32(len(res_state.datas)))
 	if res_state._free_list_idx == GPU_FREE_LIST_ABSENT_VALUE {
 		res_state._free_list_idx = int(h.index)
 		res_state.datas[h.index].handle.id = GPU_HANDLE_LIST_END_ID_VALUE
@@ -560,7 +575,7 @@ _is_handle_in_range :: proc{
 }
 
 _is_memory_handle_in_range :: proc(handle: GPU_Memory_Handle) -> (is: bool) {
-	r := get_state_from_context().renderer
+	r := get_global_state().renderer
 	when CONFIG_BUILD_VARIANT != Build_Variants[.Editor] {
 		// this shouldn't happen
 		if handle.index > GPU_MEMORY_HANDLE_INDEX_MAX {
@@ -577,7 +592,7 @@ _is_memory_handle_in_range :: proc(handle: GPU_Memory_Handle) -> (is: bool) {
 }
 
 _is_resource_handle_in_range :: proc(handle: GPU_Resource_Handle) -> (is: bool) {
-	r := get_state_from_context().renderer
+	r := get_global_state().renderer
 	when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] {
 		// this shouldn't happen
 		if handle.index > GPU_RESOURCE_HANDLE_INDEX_MAX {

@@ -45,7 +45,7 @@ android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Per
 	//if (.Write in flags || .Create in flags || .Trunc in flags || .Excl in flags || .Append in flags)\
 	//&& Android_File_Impl_Flags{.Search_Assets} & open_options == Android_File_Impl_Flags{.Serach_Assets} {}
 
-	state := get_state_from_context_android()
+	state := get_android_global_state()
 	if state == nil || state.app_ptr == nil do return nil, .ENXIO // I do not really now what error to return without extending os.Error and I'd want to avoid that
 	app := state.app_ptr
 
