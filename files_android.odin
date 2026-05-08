@@ -103,7 +103,7 @@ android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Per
 @(private="file")
 _handle_storage_file_opening_internal :: proc(name: string, path: cstring, builder: ^strings.Builder, sys_flags: linux.Open_Flags, perm: os.Permissions, open_options: Android_File_Impl_Flags, app: ^android.android_app) -> (f: ^os.File, err: os.Error) {
 	base := fp.base(name)
-	final_path := fmt.sbprintf(builder, "%v/%v", path, base) 
+	final_path := fmt.sbprintf(builder, "%v/%v", path, base)
 	cpath := strings.unsafe_to_cstring(builder)
 	fd, open_err := linux.open(cpath, sys_flags, transmute(linux.Mode)transmute(u32)perm)
 	// if we found file
@@ -135,7 +135,7 @@ android_handle_assets_proc :: proc(data: ^Android_File_Impl, mode: os.File_Strea
 	case .Read_At: return _android_read_at(data, p, offset)
 	case .Seek: return _android_seek(data, offset, whence)
 	case .Size: return android_size(data)
-	case .Close, .Destroy: 
+	case .Close, .Destroy:
 		android_close(data)
 		return
 	case .Fstat, .Flush, .Write, .Write_At: return 0, .Unsupported
@@ -149,7 +149,7 @@ android_new_file_asset :: proc(fd: linux.Fd, name: string, start, length: i64, a
 	// Firstly we need to allocate everything and if it goes wrong return and cleanup
 	impl := new(Android_File_Impl, allocator) or_return
 	defer if err != nil do free(impl, allocator)
-	
+
 	impl.asset_data = new(Android_Asset_File_Data, allocator) or_return // allocating this indicates that it's an APK asset (either opened with AAsset manager or normal file descriptor)
 	defer if err != nil do free(impl.asset_data, allocator)
 
@@ -267,7 +267,7 @@ _android_read_internal :: proc(data: ^Android_File_Impl, p: []byte) -> (n: i64, 
 
 	remaining := data.asset_data.end_offset - data.asset_data.internal_offset
 	if remaining <= 0 do return 0, .EOF
-	
+
 	to_read := min(min(i64(len(p)), remaining), MAX_RW)
 
 	read, read_err := linux.pread(data.fd, p[:to_read], data.asset_data.internal_offset)
@@ -298,7 +298,7 @@ _android_read_at :: proc(data: ^Android_File_Impl, p: []byte, offset: i64) -> (n
 
 	read, read_err := linux.pread(data.fd, p[:to_read], abs_off)
 	if read_err != nil do return 0, _get_platform_error(read_err)
-	
+
 	return i64(read), .EOF if read == 0 && to_read > 0 else nil
 }
 
@@ -312,7 +312,7 @@ _android_read_at_compressed :: proc(data: ^Android_File_Impl, p: []byte, offset:
 	if requested < 0 do return 0, .Invalid_Offset
 
 	read := android.AAsset_read(data.asset_data.handle, raw_data(p), len(p))
-	
+
 	if read == 0 do return 0, .EOF
 	else if read < 0 do return i64(read), .Unknown
 	else do return i64(read), nil
@@ -347,11 +347,11 @@ _android_seek_internal :: proc(data: ^Android_File_Impl, offset: i64, whence: io
 
 // Rationale behind reuse of linux core:os file proc:
 // 1. Accessibility: The original procedure is private within `core:os`, preventing direct reuse.
-// 2. Extended Functionality: We need to mimic libc behavior while extending it to support 
+// 2. Extended Functionality: We need to mimic libc behavior while extending it to support
 //    Android AAsset handling seamlessly.
-// 3. Cross-Compilation: Dynamically extracting the procedure from a dummy file at runtime 
-//    is unreliable. For instance, building on Windows for an Android target would yield 
-//    the wrong host procedure. Copying the Linux/Posix implementation ensures the 
+// 3. Cross-Compilation: Dynamically extracting the procedure from a dummy file at runtime
+//    is unreliable. For instance, building on Windows for an Android target would yield
+//    the wrong host procedure. Copying the Linux/Posix implementation ensures the
 //    correct logic is baked in regardless of the build host.
 
 

@@ -20,6 +20,13 @@
       android:roundIcon="@mipmap/ic_launcher_round"
       android:debuggable="false">
 
+   <meta-data
+        android:name="com.android.graphics.injectLayers.enable"
+   android:value="true" />
+
+   <meta-data android:name="com.android.graphics.developervulkanlayers" 
+               android:value="VK_LAYER_KHRONOS_validation" />
+
     <activity android:name="android.app.NativeActivity"
               android:configChanges="orientation|keyboardHidden"
               android:theme="@android:style/Theme.NoTitleBar.Fullscreen">

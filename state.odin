@@ -5,6 +5,7 @@ import "base:runtime"
 
 import "core:mem"
 import "core:log"
+import "core:time"
 import "core:strings"
 
 DEFAULT_LOGGER_OPTIONS := log.Options{.Level,.Terminal_Color,.Thread_Id}
@@ -15,8 +16,16 @@ Engine_Global_State :: struct {
 	assets: Assets_Manager,
 	window: Window_State,
 	renderer: Renderer_State,
+	time: Time_State,
+	current_frame_index: int,
 	platform_context,
 	user_data: rawptr,
+}
+
+Time_State :: struct {
+	engine_start, last_frame_start: time.Time,
+	frame_diff: time.Duration,
+	delta: f64,
 }
 
 Context_State :: struct {
@@ -75,6 +84,7 @@ Engine_Create_Context_Proc :: #type proc "contextless" (engine_state: ^Engine_Gl
 Engine_Cleanup_Context_Proc :: #type proc(context_state: ^Context_State, procs: Context_State_Cleanup_Procs = {}, data: rawptr = nil)
 
 engine_create_default_context : Engine_Create_Context_Proc : proc "contextless" (engine_state: ^Engine_Global_State, procs: Context_State_Create_Procs = {}, data: rawptr = nil) {
+	engine_state.time.engine_start = time.now()
 	engine_state.app_context.ctx = runtime.default_context()
 
 	// Set pointer in context
@@ -101,7 +111,7 @@ engine_create_default_context : Engine_Create_Context_Proc : proc "contextless" 
 engine_cleanup_default_context : Engine_Cleanup_Context_Proc : proc(context_state: ^Context_State, procs: Context_State_Cleanup_Procs = {}, data: rawptr = nil) {
 	procs := set_default_context_cleanup_procs(procs)
 
-	using context_state 
+	using context_state
 	if .Logger in resource_flags do procs.cleanup_logger(ctx.logger, ctx.allocator, procs.logger_data)
 	unset_resource_flag(&resource_flags, Context_Resource_Flag.Logger)
 
@@ -170,6 +180,7 @@ set_default_context_cleanup_procs :: proc(procs: Context_State_Cleanup_Procs) ->
 	return procs
 }
 
+// TODO: Make it more modular and not fixed to two structs, maybe pass a proc? Or have loger_change_ident proc in logger state?
 change_logger_ident :: proc(new_ident: string, state: ^Context_State) {
 	when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] && ODIN_PLATFORM_SUBTARGET == .Android {
 		d := cast(^Android_Logger_Data)state.ctx.logger.data
@@ -181,7 +192,10 @@ change_logger_ident :: proc(new_ident: string, state: ^Context_State) {
 	} else do #panic(#procedure + " is not implemented for " + CONFIG_BUILD_TARGET + " target (" + ODIN_PLATFORM_SUBTARGET + " subtarget)")
 }
 
-get_global_state :: proc() -> ^Engine_Global_State {
-	if context.user_ptr == nil do return nil
-	return cast(^Engine_Global_State)context.user_ptr 
+get_delta :: proc() -> f64 {
+	return get_global_state().time.delta
+}
+
+get_frame_time :: proc() -> time.Duration {
+	return get_global_state().time.frame_diff
 }

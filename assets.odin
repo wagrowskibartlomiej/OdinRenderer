@@ -15,6 +15,7 @@ MAX_ASSET_NAME_LEN :: 255
 MAX_ASSET_PKG_LEN :: 255
 DEFAULT_ASSETS_DIR_NAME :: "assets" // should be relative
 ASSET_FILE_NAME :: "assets.packed"
+ASSET_FILE_NAME_TEMP :: "assets.packed.temp"
 ASSET_FILE_HEADER :: "ASSETS PACKED COUNT: " // After this there is i64le representing total asset count
 UNKNOWNPKG :: "UNKNOWNPKG"
 
@@ -40,7 +41,7 @@ Assets_Manager :: struct {
 	resources: map[Asset_ID]Asset,
 	hash_state: ^xxhash.XXH3_state, // used for ID generation
 	allocator, // allocator used for allocations of hash state, map, map entries, string etc.
-	asset_allocator: runtime.Allocator, // 
+	asset_allocator: runtime.Allocator, //
 	assets_file: ^os.File, // Handle for accessing assets.packed file
 	_strings_arena: Assets_Strings_Arena, // to store names and pkgs strings
 	_internal_metadata: ^Assets_Manager_Editor_Metadata, // reserved for internal usage (i.e. tracking which assets will be added to assets.packed in Editor build variant etc.)
@@ -52,12 +53,13 @@ Asset_ID :: xxhash.xxh_u64
 Asset :: struct {
 	name, pkg: string, // name is the filename of asset, pkg is the directory name in which asset is located (extracted using path.base proc)
 	type: Asset_Type, // generic type
-	file_type: Asset_File_Type, // indicating which type of file data it is (e.g. Shader can be SPIRV or DXIL) 
+	file_type: Asset_File_Type, // indicating which type of file data it is (e.g. Shader can be SPIRV or DXIL)
 	file_offset, file_size: i64, // Where is actual asset data in assets.packed file, like Vertex bytes for mesh etc.
 	flags: Asset_Flags,
 	memory: Asset_Memory,
 	_internal_metadata: ^Asset_Editor_Metadata, // reserved for future usage, place to store metadata for debugging or something
-} 
+}
+
 Asset_Editor_Metadata :: struct {
 	source: ^os.File, // we need to keep it in case of loading an unloading memory that is not written into assets.packed
 }
@@ -126,7 +128,7 @@ initialize_asset_manager :: proc(assets_manager: ^Assets_Manager, asset_file := 
 	os.read_at(assets_manager.assets_file, count_b[:], size_of(ASSET_FILE_HEADER))
 	*/
 
-	// For now I'm gonna hold strings in dynamic arena, but probably later I'd get rid off using string and prebake all assets into enum 
+	// For now I'm gonna hold strings in dynamic arena, but probably later I'd get rid off using string and prebake all assets into enum
 	// but leave the ability for using strings, this flexibility might be really usefull
 	mem.dynamic_arena_init(&assets_manager._strings_arena.handle)
 	assets_manager._strings_arena.allocator = mem.dynamic_arena_allocator(&assets_manager._strings_arena.handle)
@@ -141,7 +143,7 @@ cleanup_asset_manager :: proc(assets_manager: ^Assets_Manager) {
 
 	mem.dynamic_arena_destroy(&assets_manager._strings_arena.handle)
 	assets_manager._strings_arena.allocator = runtime.nil_allocator() // just to be safe I guess
-	
+
 	os.close(assets_manager.assets_file)
 
 	err := xxhash.XXH3_destroy_state(assets_manager.hash_state, assets_manager.allocator)
@@ -151,12 +153,12 @@ get_asset_id :: proc(name, pkg: string, type: Asset_File_Type, state: ^xxhash.XX
 	if state == nil do return
 
 	err := xxhash.XXH3_64_reset(state)
-	if err != nil do return 
+	if err != nil do return
 
 	SEPARATOR := [?]byte{0}
 
 	name_b := transmute([]byte)name
-	pkg_b := transmute([]byte)name
+	pkg_b := transmute([]byte)pkg
 	type_b := transmute([size_of(type)]byte)type
 
 	xxhash.XXH3_64_update(state, name_b)
@@ -166,7 +168,7 @@ get_asset_id :: proc(name, pkg: string, type: Asset_File_Type, state: ^xxhash.XX
 	xxhash.XXH3_64_update(state, type_b[:])
 
 	id = xxhash.XXH3_64_digest(state)
-	
+
 	return id, true
 }
 get_asset :: proc{
@@ -189,7 +191,7 @@ _get_asset_file_type :: proc(name: string) -> Asset_File_Type {
 	for t in Asset_File_Type {
 		if Asset_File_Type_Strings[t] == extension do return t
 	}
-	
+
 	return .UNRECOGNIZED
 }
 @(private="file")
@@ -205,7 +207,7 @@ _get_asset_type :: proc(asset: Asset) -> Asset_Type {
 read_assets_packed :: proc(assets_file: ^os.File, manager: ^Assets_Manager, load_assets_mem := false /* loads all assets memory at once, good when there are only few assets */ ) {
 	header_offset, // Should be zero at all times
 	map_start_offset,
-	map_offset_counter: i64 
+	map_offset_counter: i64
 
 	descriptor: Asset_Packed_Descriptor
 	_count_file: Total_Assets_Count
@@ -223,7 +225,7 @@ read_assets_packed :: proc(assets_file: ^os.File, manager: ^Assets_Manager, load
 	err := reserve_map(&manager.resources, count)
 	if err != nil do log.warnf("Map reservation failure: %v", err) // maybe panic?
 
-	// assign counter 
+	// assign counter
 	map_offset_counter = map_start_offset
 
 	if count == 0 do log.debug("Asset count read from file is 0")
@@ -293,12 +295,14 @@ find_asset_in_packed_by_data:: proc(name, pkg: string, file_type: Asset_File_Typ
 	descriptor: Asset_Packed_Descriptor
 	for i in 0 ..< count {
 		os.read_at(manager.assets_file, slice.bytes_from_ptr(&descriptor, size_of(descriptor)), map_offset)
+		map_offset += size_of(descriptor)
+
 		desc_name := string(descriptor.name_bytes[:descriptor.name_count])
 		desc_pkg := string(descriptor.pkg_bytes[:descriptor.pkg_count])
 		desc_type := Asset_File_Type(descriptor.file_type)
 		if name == desc_name && pkg == desc_pkg && file_type == desc_type {
 			if !insert_asset_into_resources do return i, false
-			
+
 			asset: Asset
 			_descriptor_to_asset(&descriptor, &asset)
 			id, ok := get_asset_id(asset.name, asset.pkg, asset.file_type, manager.hash_state)
@@ -311,10 +315,10 @@ find_asset_in_packed_by_data:: proc(name, pkg: string, file_type: Asset_File_Typ
 				log.errorf("Asset '%v:%v' of ID %v already exists", asset.pkg, asset.name, id)
 				return i, false
 			}
-			
+
 			manager.resources[id] = asset
 			return i, true
-		} else do map_offset += size_of(descriptor)
+		}
 	}
 
 	return
@@ -332,12 +336,13 @@ find_asset_in_packed_by_id :: proc(id: Asset_ID, manager: ^Assets_Manager, inser
 	descriptor: Asset_Packed_Descriptor
 	for i in 0 ..< count {
 		os.read_at(manager.assets_file, slice.bytes_from_ptr(&descriptor, size_of(descriptor)), map_offset)
+		map_offset += size_of(descriptor)
 
 		desc_name := string(descriptor.name_bytes[:descriptor.name_count])
 		desc_pkg := string(descriptor.pkg_bytes[:descriptor.pkg_count])
 		desc_type := Asset_File_Type(descriptor.file_type)
 		desc_id := get_asset_id(desc_name, desc_pkg, desc_type, manager.hash_state) or_continue
-		
+
 		if desc_id == id {
 			if !insert_asset_into_resources do return i, false
 
@@ -345,13 +350,13 @@ find_asset_in_packed_by_id :: proc(id: Asset_ID, manager: ^Assets_Manager, inser
 				log.errorf("Asset of ID %v already exists", id)
 				return i, false
 			}
-			
+
 			asset: Asset
 			_descriptor_to_asset(&descriptor, &asset)
-			
+
 			manager.resources[id] = asset
 			return i, true
-		} else do map_offset += size_of(descriptor)
+		}
 	}
 
 	return
@@ -384,16 +389,19 @@ _asset_to_descriptor :: proc(file_offset: i64, ass: ^Asset, desc: ^Asset_Packed_
 }
 // Builds assets.packed file from loaded assets and every file in assets directory
 //NOTE: Maybe in future it'd be a good idea to add something like new asset tracker into metadata to only append to created assets.packed instead of rebuilding it
-build_asset_packed :: proc(manager: ^Assets_Manager) -> (success: bool) {
-	// If not opened, create/open
-	if manager.assets_file == nil {
-		f, err := engine_open(ASSET_FILE_NAME, {.Write, .Create, .Trunc}, os.Permissions_Read_Write_All)
-		if err != nil {
-			log.errorf("Opening '%v' for building failure: %v", ASSET_FILE_NAME, err)
-			return false
-		}
-		manager.assets_file = f
+build_asset_packed :: proc(manager: ^Assets_Manager, fallback_assets_name := ASSET_FILE_NAME, temp_name := ASSET_FILE_NAME_TEMP, temp_allocator := context.temp_allocator) -> (success: bool) {
+	assert(manager != nil)
+
+	f, err := engine_open(temp_name, {.Write, .Create, .Trunc}, os.Permissions_Read_Write_All)
+	if err != nil {
+		log.errorf("Opening '%v' for building failure: %v", temp_name, err)
+		return false
 	}
+
+	_old_name := os.name(manager.assets_file)
+	_old_name = strings.clone(_old_name, temp_allocator) or_else fallback_assets_name
+	_old_file := manager.assets_file
+	manager.assets_file = f
 
 	map_start_offset, map_offset_counter,
 	binary_data_start_offset,binary_data_offset_counter: i64
@@ -433,7 +441,7 @@ build_asset_packed :: proc(manager: ^Assets_Manager) -> (success: bool) {
 
 		name_bytes_offset := map_offset_counter + i64(offset_of(descriptor.name_bytes))
 		pkg_bytes_offset := map_offset_counter + i64(offset_of(descriptor.pkg_bytes))
-		// write all the data 
+		// write all the data
 		os.write_at(manager.assets_file, slice.bytes_from_ptr(&descriptor, size_of(descriptor)), map_offset_counter)
 		map_offset_counter += size_of(descriptor)
 
@@ -442,11 +450,29 @@ build_asset_packed :: proc(manager: ^Assets_Manager) -> (success: bool) {
 		os.write_at(manager.assets_file, transmute([]byte)ass.pkg, pkg_bytes_offset)
 
 		// write the memory of asset
-		data := (raw_data(ass.memory.regular))[:descriptor.data_size]
+		data: []byte
+		switch ass.file_type {
+			case .SPIRV:
+				data = slice.reinterpret([]byte, ass.memory.spirv)
+			case .UNRECOGNIZED:
+				data = ass.memory.regular
+		}
 		os.write_at(manager.assets_file, data , binary_data_offset_counter)
 		binary_data_offset_counter += i64(len(data))
 
 		when CONFIG_VERBOSE_LOG do log.debugf("Written asset '%v:%v' into '%v' successfully", ass.pkg, ass.name, ASSET_FILE_NAME)
+	}
+
+	when CONFIG_VERBOSE_LOG do log.debug("Starting replacement of asset file")
+	os.close(manager.assets_file)
+	rm_err := os.remove(_old_name)
+	if rm_err != nil {
+		log.errorf("Asset file removal failure: %v", rm_err)
+	}
+
+	rn_err := os.rename(temp_name, _old_name)
+	if rn_err != nil {
+		log.errorf("Asset file replacement failure: %v", rn_err)
 	}
 
 	return true
@@ -483,13 +509,13 @@ read_asset_file :: proc(file: string, manager: ^Assets_Manager, load_data := fal
 
 	ass: Asset
 	ass._internal_metadata = new(Asset_Editor_Metadata, manager.allocator)
-	defer if err != nil do free(ass._internal_metadata, manager.allocator) 
+	defer if err != nil do free(ass._internal_metadata, manager.allocator)
 
 	ass._internal_metadata.source = f
 	ass.pkg = pkg
 	ass.name = name
 	ass.file_type = _get_asset_file_type(file)
-	
+
 	id, ok := get_asset_id(ass.name, ass.pkg, ass.file_type, manager.hash_state)
 	if !ok {
 		log.errorf("Asset '%v:%v' ID retrieval failure", ass.pkg, ass.name)
@@ -518,7 +544,7 @@ read_asset_file :: proc(file: string, manager: ^Assets_Manager, load_data := fal
 		mem_err := _load_asset_memory_internal(&ass, f, manager.asset_allocator)
 		if mem_err != nil do log.errorf("Loading asset's '%v:%v' memory failure: %v", ass.pkg, ass.name, mem_err)
 	}
-	
+
 	manager.resources[id] = ass
 
 	return nil
@@ -533,9 +559,10 @@ cleanup_asset :: proc(asset: ^Asset, manager: ^Assets_Manager, destroy_key: bool
 		if err != nil do log.errorf("Asset file closing failure: %v", err)
 
 		// Free despite not closing, I don't think there is much to do if something like this happens
-		free_err := free(asset._internal_metadata, manager.allocator) 
+		free_err := free(asset._internal_metadata, manager.allocator)
+		asset._internal_metadata = nil
 	}
-	
+
 	id, ok := get_asset_id(asset.name, asset.pkg, asset.file_type, manager.hash_state)
 	if !ok {
 		log.errorf("Asset '%v:%v' ID retrieval failed, unable to delete entry from resource map", asset.pkg, asset.name)
@@ -572,7 +599,7 @@ _load_asset_memory_internal :: proc(asset: ^Asset, file: ^os.File, allocator: ru
 
 	read := os.read_at(file, buff, asset.file_offset) or_return
 	if read != len(buff) do log.warnf("Allocated buffer for asset '%v:%v' size: %v bytes - read %v bytes", asset.pkg, asset.name, len(buff), read)
-	
+
 	switch asset.file_type {
 	case .SPIRV:
 		// SPIRV is packed as u32le (and most of the times it won't need the endian swap)
@@ -627,12 +654,12 @@ read_assets_dir_recursive :: proc(manager: ^Assets_Manager, dir_name := DEFAULT_
 	}
 	// in case someone passes other allocator? (maybe temp one wouldn't be sufficient?)
 	defer for i in infos do os.file_info_delete(i, allocator)
-	defer delete(infos, allocator) 
+	defer delete(infos, allocator)
 
 	for i in infos {
 		#partial switch i.type {
 		case .Directory: read_assets_dir_recursive(manager, i.fullpath, allocator, load_assets_mem)
-		case .Regular: 
+		case .Regular:
 			asset_err := read_asset_file(i.fullpath, manager, load_assets_mem)
 			if asset_err != nil && asset_err != .Asset_On_Ignore_List do log.errorf("Unable to read asset from file '%v'", i.name)
 		case: continue

@@ -7,30 +7,30 @@ Framebuffers_State :: struct {
 	swapchain: []vk.Framebuffer
 }
 
-build_framebuffers :: proc(init_state: ^Vulkan_Init_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
-	if .Framebuffers in init_state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Init_Resource_Flag.Framebuffers)
+build_framebuffers :: proc(init_state: ^Core_Vk_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
+	if .Framebuffers in init_state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Static_State_Resource_Flag.Framebuffers)
 
 	success = build_framebuffers_swapchain(init_state, allocator, callbacks)
 	success or_return
 
-	set_resource_flag(&init_state.resource_flags, Vulkan_Init_Resource_Flag.Framebuffers)
+	set_resource_flag(&init_state.resource_flags, Vulkan_Static_State_Resource_Flag.Framebuffers)
 
 	when CONFIG_VERBOSE_LOG do log.debug("All framebuffers built")
 	return
 }
-cleanup_framebuffers :: proc(init_state: ^Vulkan_Init_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
+cleanup_framebuffers :: proc(init_state: ^Core_Vk_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Framebuffers not_in init_state.resource_flags {
-		log_called_when_resource_unset(#procedure, Vulkan_Init_Resource_Flag.Framebuffers)
+		log_called_when_resource_unset(#procedure, Vulkan_Static_State_Resource_Flag.Framebuffers)
 		return
 	}
 
 	cleanup_framebuffers_swapchain(init_state, allocator, callbacks)
 
-	unset_resource_flag(&init_state.resource_flags, Vulkan_Init_Resource_Flag.Framebuffers)
+	unset_resource_flag(&init_state.resource_flags, Vulkan_Static_State_Resource_Flag.Framebuffers)
 	when CONFIG_VERBOSE_LOG do log.debug("All framebuffers cleaned up")
 }
 
-build_framebuffers_swapchain :: proc(init_state: ^Vulkan_Init_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
+build_framebuffers_swapchain :: proc(init_state: ^Core_Vk_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
 	create_info := vk.FramebufferCreateInfo{
 		sType = .FRAMEBUFFER_CREATE_INFO,
 		width = init_state.swapchain.image_extent.width,
@@ -39,7 +39,7 @@ build_framebuffers_swapchain :: proc(init_state: ^Vulkan_Init_State, allocator :
 		renderPass = init_state.render_passes.main_render_pass,
 		attachmentCount = 1,
 	}
-	
+
 	init_state.framebuffers.swapchain = make([]vk.Framebuffer, len(init_state.swapchain.images), allocator)
 	defer if !success do delete(init_state.framebuffers.swapchain, allocator)
 
@@ -59,7 +59,7 @@ build_framebuffers_swapchain :: proc(init_state: ^Vulkan_Init_State, allocator :
 	return true
 }
 
-cleanup_framebuffers_swapchain :: proc(init_state: ^Vulkan_Init_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
+cleanup_framebuffers_swapchain :: proc(init_state: ^Core_Vk_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	for f in init_state.framebuffers.swapchain do vk.DestroyFramebuffer(init_state.device.handle, f, callbacks)
 	delete(init_state.framebuffers.swapchain, allocator)
 	when CONFIG_VERBOSE_LOG do log.debug("Framebuffers for swapchain cleaned up")
