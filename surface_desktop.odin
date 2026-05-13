@@ -12,7 +12,7 @@ glfw_create_surface :: proc(state: ^Core_Vk_State, window_state: ^Window_State, 
 	}
 	when CONFIG_VERBOSE_LOG  do log.debug("GLFW Surface created")
 
-	set_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Surface)
+	set_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Surface)
 
 	success = true
 	return

@@ -1,9 +1,23 @@
-New-Item -ItemType Directory -Force -Path "./assets/shaders/spirv"
+$ShaderDir = "./assets/shaders"
+$SpirvDir = "$ShaderDir/spirv"
 
-& "$env:VULKAN_SDK/bin/glslc.exe" ./assets/shaders/default_vertex.vert -o default_vertex.spv
-& "$env:VULKAN_SDK/bin/glslc.exe" ./assets/shaders/default_fragment.frag -o default_fragment.spv
+if (-not (Test-Path $SpirvDir)) {
+    New-Item -Path $SpirvDir -ItemType Directory | Out-Null
+}
 
-Move-Item -Path "default_vertex.spv" -Destination "./assets/shaders/spirv/default_vertex.spv" -Force
-Move-Item -Path "default_fragment.spv" -Destination "./assets/shaders/spirv/default_fragment.spv" -Force
+function Compile-Shaders {
+    $Shaders = Get-ChildItem -Path $ShaderDir -Include *.vert, *.frag -File
 
-Write-Host "Shaders compiled and moved successfully!" -ForegroundColor Green
+    foreach ($Shader in $Shaders) {
+        $FilenameNoExt = $Shader.BaseName
+        $OutputFile = Join-Path $SpirvDir "$FilenameNoExt.spv"
+
+        Write-Host "Compiling: $($Shader.Name) -> $FilenameNoExt.spv"
+
+        & glslc "$($Shader.FullName)" -o "$OutputFile" --target-env=vulkan1.0
+    }
+}
+
+Compile-Shaders
+
+Write-Host "Compiled shaders are in $SpirvDir"

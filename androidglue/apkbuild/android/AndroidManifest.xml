@@ -20,16 +20,19 @@
       android:roundIcon="@mipmap/ic_launcher_round"
       android:debuggable="false">
 
+<!--  If you want to use Validation layers uncomment this
    <meta-data
         android:name="com.android.graphics.injectLayers.enable"
    android:value="true" />
 
-   <meta-data android:name="com.android.graphics.developervulkanlayers" 
+   <meta-data android:name="com.android.graphics.developervulkanlayers"
                android:value="VK_LAYER_KHRONOS_validation" />
+-->
 
     <activity android:name="android.app.NativeActivity"
-              android:configChanges="orientation|keyboardHidden"
-              android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+              android:configChanges="orientation|screenSize|keyboardHidden"
+              android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+              android:screenOrientation="sensorLandscape">
 
       <meta-data android:name="android.app.lib_name"
                  android:value="main" />

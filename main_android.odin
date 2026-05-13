@@ -2,8 +2,8 @@
 package engine
 
 
+import "core:time"
 import android "./androidglue/ndkbindings"
-import "core:slice"
 
 @(export)
 android_main :: proc "c" (android_app_state: ^android.android_app) {
@@ -12,16 +12,7 @@ android_main :: proc "c" (android_app_state: ^android.android_app) {
 	context, engine_state = engine_init_android(android_app_state)
 	defer engine_cleanup_android(engine_state)
 
-	tri:  [3]Triangle_Vertex
-	tri[0].color = {1, 0, 0, 1}
-	tri[0].position = {0, 0.5}
-
-	tri[1].color = {0, 1, 0, 1}
-	tri[1].position = {-0.5, -0.5}
-
-	tri[2].color = {0, 0, 1, 1}
-	tri[2].position = {0.5, -0.5}
-
+	engine_state.time.last_frame_start = time.now()
 	for engine_is_running(engine_state) {
 		engine_calculate_delta(engine_state)
 		engine_poll_events(engine_state)
@@ -33,15 +24,23 @@ android_main :: proc "c" (android_app_state: ^android.android_app) {
 			engine_renderer_cleanup_android(engine_state)
 		}
 
-		if .Focus in engine_state.flags do engine_process_input()
+		if .Focus in engine_state.flags {
+			engine_process_input()
+			engine_update_logic()
+		}
 
 		if android_can_draw(engine_state) {
-			engine_update_gpu(raw_data(tri[:]), slice.size(tri[:]), true)
+			engine_upload_gpu(android_should_upload_to_gpu(engine_state))
 			engine_draw_frame(engine_state, engine_state.renderer.current_frame_index)
 			engine_update_current_frame_idx(engine_state)
+			if android_should_upload_to_gpu(engine_state) do engine_state.flags -= {.Uploaded_To_GPU}
 		}
 	}
 
+}
+
+android_should_upload_to_gpu :: proc(engine_state: ^Engine_Android_Global_State) -> bool {
+	return .Uploaded_To_GPU not_in engine_state.flags
 }
 
 android_should_initalize_renderer :: proc(engine_state: ^Engine_Android_Global_State) -> bool {

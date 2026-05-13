@@ -12,6 +12,7 @@ Swapchain_State :: struct {
 	present_mode: vk.PresentModeKHR,
 	images: []Swapchain_Image,
 }
+
 Swapchain_Image :: struct {
 	handle: vk.Image,
 	view: vk.ImageView,
@@ -53,13 +54,15 @@ choose_swapchain_image_extent :: proc(capabilities: vk.SurfaceCapabilitiesKHR, w
 choose_swapchain_presentation_mode :: proc(present_modes: []vk.PresentModeKHR) -> vk.PresentModeKHR {
 	log.assert(len(present_modes) >= 1, "Passed presentation modes length is zero")
 
-	for p in present_modes do if p == .FIFO do return p
+	for p in present_modes {
+		if p == .IMMEDIATE do return p
+	}
 
 	return present_modes[0]
 }
 
 create_swapchain :: proc(state: ^Core_Vk_State, window_handle: rawptr, old_swapchain: vk.SwapchainKHR, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
-	if .Swapchain in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Static_State_Resource_Flag.Swapchain)
+	if .Swapchain in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Core_State_Resource_Flag.Swapchain)
 
 	NON_STEREOSCOPIC :: 1
 	DEFAULT_USAGE : vk.ImageUsageFlags : {.COLOR_ATTACHMENT}
@@ -194,44 +197,71 @@ destroy_swapchain_internal :: proc(device: vk.Device, swapchain: ^Swapchain_Stat
 	when CONFIG_VERBOSE_LOG do log.debug("Swapchain destroyed")
 }
 
-recreate_swapchain :: proc(init: ^Core_Vk_State, window_handle: rawptr, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
-	assert(init != nil && window_handle != nil)
+recreate_swapchain :: proc(pipeline_kind: Graphics_Pipeline_Kind, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
+	g := get_global_state()
+	core := &g.renderer.core
+	window_handle := g.window.handle
 
-	vk.DeviceWaitIdle(init.device.handle)
-	vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(init.physical_devices.active.handle, init.surface.handle, &init.physical_devices.active.capabilites)
-	cleanup_framebuffers(init, allocator, callbacks)
 
-	old_swapchain := init.swapchain
-	success := create_swapchain(init, window_handle, old_swapchain.handle, allocator, callbacks)
+	vk.DeviceWaitIdle(core.device.handle)
+	vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(core.physical_devices.active.handle, core.surface.handle, &core.physical_devices.active.capabilites)
+	cleanup_framebuffers(core, allocator, callbacks)
+	cleanup_depth_image(core, callbacks)
+
+	old_swapchain := core.swapchain
+	success := create_swapchain(core, window_handle, old_swapchain.handle, allocator, callbacks)
 	if !success {
 		log.panic("Swapchain recreation failure")
 	}
 
-	if old_swapchain.image_format.format != init.swapchain.image_format.format {
+	success = create_depth_image(core, callbacks)
+	if !success {
+		log.panic("Depth image recreation failure")
+	}
+
+	if old_swapchain.image_format.format != core.swapchain.image_format.format {
 		log.panic("Unexpected swapchain format change, aborting") //TODO: Maybe handle with render pass recreation
 	}
 
-	old_pipelines := init.pipelines
+	old_pipelines := core.pipelines
 
-	init.pipelines.triangle.handle, success = create_triangle_pipeline_internal(
-		init.device.handle,
-		init.render_passes.main_render_pass,
-		old_pipelines.triangle.layout,
-		old_pipelines.triangle.vertex_module,
-		old_pipelines.triangle.fragment_module,
-		init.swapchain.image_extent,
-		old_pipelines.cache,
-		callbacks
-	)
-
+	switch pipeline_kind {
+	case .Triangle:
+		core.pipelines.datas[.Triangle].handle, success = create_triangle_pipeline_internal(
+			core.device.handle,
+			core.render_passes.handles[.Triangle],
+			core.pipelines.layouts[.Basic],
+			core.shaders.modules[.Triangle_Vertex],
+			core.shaders.modules[.Triangle_Fragment],
+			core.swapchain.image_extent,
+			old_pipelines.cache,
+			true if .Dynamic_Viewport in core.pipelines.datas[.Triangle].flags else false,
+			callbacks
+		)
+	case .Default_Mesh:
+		core.pipelines.datas[.Default_Mesh].handle, success = create_default_mesh_pipeline_internal(
+			core.device.handle,
+			core.render_passes.handles[.Default_Mesh],
+			core.pipelines.layouts[.Default_Mesh],
+			core.shaders.modules[.Default_Mesh_Vertex],
+			core.shaders.modules[.Default_Mesh_Fragment],
+			core.swapchain.image_extent,
+			old_pipelines.cache,
+			true if .Dynamic_Viewport in core.pipelines.datas[.Default_Mesh].flags else false,
+			callbacks
+		)
+	}
 	if !success {
 		log.panic("Pipeline recreation failure")
 	}
 
-	destroy_swapchain_internal(init.device.handle, &old_swapchain, allocator, callbacks)
-	vk.DestroyPipeline(init.device.handle, old_pipelines.triangle.handle, callbacks)
+	destroy_swapchain_internal(core.device.handle, &old_swapchain, allocator, callbacks)
+	switch pipeline_kind {
+		case .Triangle: vk.DestroyPipeline(core.device.handle, old_pipelines.datas[.Triangle].handle, callbacks)
+		case .Default_Mesh: vk.DestroyPipeline(core.device.handle, old_pipelines.datas[.Default_Mesh].handle, callbacks)
+	}
 
-	success = build_framebuffers(init, allocator, callbacks)
+	success = build_framebuffers(core, allocator, callbacks)
 	if !success {
 		log.panic("Framebuffers rebuilding failure")
 	}

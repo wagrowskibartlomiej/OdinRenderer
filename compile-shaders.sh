@@ -1,9 +1,27 @@
 #!/bin/bash
 
-mkdir -p ./assets/shaders/spirv
+SHADER_DIR="./assets/shaders"
+SPIRV_DIR="$SHADER_DIR/spirv"
 
-$VULKAN_SDK/bin/glslc ./assets/shaders/default_vertex.vert -o default_vertex.spv --target-env=vulkan1.0
-$VULKAN_SDK/bin/glslc ./assets/shaders/default_fragment.frag -o default_fragment.spv --target-env=vulkan1.0
+mkdir -p "$SPIRV_DIR"
 
-mv default_vertex.spv ./assets/shaders/spirv/default_vertex.spv
-mv default_fragment.spv ./assets/shaders/spirv/default_fragment.spv
+compile_shaders() {
+    for shader in "$SHADER_DIR"/*.{vert,frag}; do
+
+        [ -e "$shader" ] || continue
+
+        filename=$(basename "$shader")
+
+        basename_no_ext="${filename%.*}"
+
+        output_file="$SPIRV_DIR/$basename_no_ext.spv"
+
+        echo "Compiling: $filename -> $basename_no_ext.spv"
+
+        $VULKAN_SDK/bin/glslc "$shader" -o "$output_file" --target-env=vulkan1.0
+    done
+}
+
+compile_shaders
+
+echo "Compiled shaders are in $SPIRV_DIR"

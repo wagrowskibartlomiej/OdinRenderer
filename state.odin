@@ -19,6 +19,7 @@ Engine_Global_State :: struct {
 	time: Time_State,
 	platform_context,
 	user_data: rawptr,
+	mesh: Model_World_Data,
 }
 
 Time_State :: struct {

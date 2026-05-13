@@ -19,7 +19,7 @@ Proc_vkCreateAndroidSurfaceKHR :: #type proc "system" (instance: vk.Instance, pC
 
 // Creates Android Vulkan surface. Prefer using `create_surface`.
 android_create_surface :: proc(state: ^Core_Vk_State, window_state: ^Window_State, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
-	if .Surface in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Static_State_Resource_Flag.Surface)
+	if .Surface in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Core_State_Resource_Flag.Surface)
 
 	/*
 	symbol, found := dynlib.symbol_address(state.vklib, "vkCreateAndroidSurfaceKHR")
@@ -43,7 +43,7 @@ android_create_surface :: proc(state: ^Core_Vk_State, window_state: ^Window_Stat
 	}
 	when CONFIG_VERBOSE_LOG do log.debug("Android surface created")
 
-	set_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Surface)
+	set_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Surface)
 
 	success = true
 	return

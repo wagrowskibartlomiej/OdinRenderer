@@ -1,7 +1,7 @@
 package engine
 
 import "core:c"
-import "core:slice"
+import "core:time"
 import "vendor:glfw"
 
 main :: proc () {
@@ -15,28 +15,20 @@ main :: proc () {
 	defer engine_renderer_cleanup(engine_state)
 	if !success do return
 
-	tri:  [3]Triangle_Vertex
-
-	tri[0].color = {1, 0, 1, 1}
-	tri[0].position = {0, 0.5}
-
-	tri[1].color = {0, 1, 0, 1}
-	tri[1].position = {-0.5, -0.5}
-
-	tri[2].color = {0, 0, 1, 1}
-	tri[2].position = {0.5, -0.5}
-
-
 	current_frame: int
+	one_time_upload := true
+	engine_state.time.last_frame_start = time.now()
 	for engine_is_running(engine_state) {
 		engine_calculate_delta(engine_state)
 		engine_poll_events(engine_state)
 
 		engine_process_input()
-		engine_update_gpu(raw_data(tri[:]), slice.size(tri[:]), true)
+		engine_update_logic()
+		engine_upload_gpu(one_time_upload)
 		engine_draw_frame(engine_state, current_frame)
 
 		engine_update_current_frame_idx(engine_state)
+		one_time_upload = false
 	}
 
 }

@@ -3,7 +3,6 @@ package engine
 
 import "core:os"
 import "core:log"
-import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "core:reflect"
@@ -154,7 +153,7 @@ All_Options_Flag :: union {
 
 /*
 	Option_Feature "config" tag used for parsing configuration file if this struct is inside another.
-	
+
 	Foo :: struct {
 		some_option: Option_Feature(Some_Enum) "conifg:SOME OPTION NAME"
 		other_values: int,
@@ -356,13 +355,13 @@ _options_enable :: proc(options: ^bit_set[$T], option: T) where intrinsics.type_
 	}
 	options^ |= bit_set[T]{option}
 	when CONFIG_VERBOSE_LOG do log.debugf("Option '%v' enabled", option)
-} 
+}
 
 @(private="file")
 _options_enable_with_check :: proc(options: ^bit_set[$T], available: bit_set[T], option: T) where intrinsics.type_is_enum(T) {
 	if option in available do _options_enable(options, option)
 	else do log.debugf("Requested to enable option '%v' when it's set as not available feature")
-} 
+}
 
 @(private="file")
 _options_disable :: proc(options: ^bit_set[$T], option: T) where intrinsics.type_is_enum(T) {
@@ -382,7 +381,7 @@ _options_set_available :: proc(options: ^bit_set[$T], option: T) where intrinsic
 	}
 	options^ |= bit_set[T]{option}
 	when CONFIG_VERBOSE_LOG do log.debugf("Option '%v' enabled", option)
-} 
+}
 
 @(private="file")
 _options_get :: proc(options: bit_set[$T], option: T) -> bool where intrinsics.type_is_enum(T) {
@@ -497,10 +496,10 @@ save_handle_options :: proc(f: ^os.File, offset: ^i64, structure: any) {
 			if struct_type == .Option || struct_type == .Option_Feature do save_handle_option(config_tag, f, offset, field_value_any)
 			else if struct_type == .Option_Flags || struct_type == .Option_Feature_Flags do save_handle_option_flags(f, offset, field_value_any)
 			else do save_handle_options(f, offset, field_value_any)
-		case runtime.Type_Info_Bit_Set: 
+		case runtime.Type_Info_Bit_Set:
 			when CONFIG_BUILD_TARGET != Build_Variants[.Release] && CONFIG_VERBOSE_LOG do log.warnf("Using plain bit_set in options is not recommended")
 			save_handle_bit_set(info, &t, f, offset, field_value_any)
-		case runtime.Type_Info_Enum: 
+		case runtime.Type_Info_Enum:
 			when CONFIG_BUILD_TARGET != Build_Variants[.Release] && CONFIG_VERBOSE_LOG do log.warnf("Using plain enum in options is not recommended")
 			save_handle_enum(info, &t, config_tag, f, offset, field_value_any)
 		case:
@@ -585,7 +584,7 @@ save_handle_option_flags :: proc(f: ^os.File, offset: ^i64, structure: any) {
 
 		os.write_at(f, flag, offset^)
 		offset^ += i64(slice.size(flag))
-		
+
 		os.write_at(f, CONFIG_FILE_NEW_LINE[:], offset^)
 		offset^ += i64(slice.size(CONFIG_FILE_NEW_LINE[:]))
 	}
@@ -596,7 +595,7 @@ save_handle_bit_set :: proc(info: ^runtime.Type_Info, bit_set_info: ^runtime.Typ
 	if !success do return
 
 	enum_info := base_enum_info.variant.(runtime.Type_Info_Enum)
-	
+
 	for v, i in enum_info.values {
 	name := transmute([]byte)enum_info.names[i]
 
@@ -656,31 +655,31 @@ check_and_write_enum_from_rawptr :: proc(handle: ^os.File, offset: ^i64, data: r
 	enum_val := cast_enum_value_to_i64(data, size)
 
 	if val == enum_val {
-		os.write_at(handle, bytes, offset^) 
+		os.write_at(handle, bytes, offset^)
 		offset^ += i64(slice.size(bytes))
 	}
 }
 
 value_in_bit_set_by_rawptr :: proc(value: runtime.Type_Info_Enum_Value, lowest: i64, size: int, data: rawptr) -> bool {
 	switch size {
-	case 1: 
-		num := (cast(^u8)data)^ 
+	case 1:
+		num := (cast(^u8)data)^
 		mask := u8(1 << (u8(value) - u8(lowest)))
 		return num & mask == mask
 	case 2:
-		num := (cast(^u16)data)^ 
+		num := (cast(^u16)data)^
 		mask := u16(1 << (u16(value) - u16(lowest)))
 		return num & mask == mask
 	case 4:
-		num := (cast(^u32)data)^ 
+		num := (cast(^u32)data)^
 		mask := u32(1 << (u32(value) - u32(lowest)))
 		return num & mask == mask
 	case 8:
-		num := (cast(^u64)data)^ 
+		num := (cast(^u64)data)^
 		mask := u64(1 << (u64(value) - u64(lowest)))
 		return num & mask == mask
 	case 16:
-		num := (cast(^u128)data)^ 
+		num := (cast(^u128)data)^
 		mask := u128(1 << (u128(value) - u128(lowest)))
 		return num & mask == mask
 	case: return false
@@ -706,7 +705,7 @@ cast_enum_value_to_i64 :: proc(enum_ptr: rawptr, size: int) -> i64 {
 load_configuration :: proc(settings_string_allocator: runtime.Allocator, temp_allocator := context.temp_allocator) {
 	f, err := engine_open(ENGINE_CONFIGURATION_FILE_NAME)
 	if err != nil {
-		when CONFIG_BUILD_VARIANT != Build_Variants[.Release] do fmt.eprintfln("Failed to open '%v' file to read enigne configuration: %v", ENGINE_CONFIGURATION_FILE_NAME, err)
+		log.infof("Failed to open '%v' file to read enigne configuration: %v", ENGINE_CONFIGURATION_FILE_NAME, err)
 		return
 	}
 	defer os.close(f)
@@ -715,7 +714,7 @@ load_configuration :: proc(settings_string_allocator: runtime.Allocator, temp_al
 	defer delete(m)
 
 	for k, v in m do load_value(k, v, settings_string_allocator)
-	
+
 	free_all(temp_allocator)
 
 	when CONFIG_VERBOSE_LOG do log.debugf("Loading of file '%v' successful", ENGINE_CONFIGURATION_FILE_NAME)
@@ -736,14 +735,14 @@ parse_engine_configuration_file :: proc(f: ^os.File, allocator := context.alloca
 	data := string(data_b[:]) // convert to string to iterate as rune for utf8 encoding
 
 	// 128 characters should be more than enough
-	key_buff := make([dynamic]rune, 0, 128) 
+	key_buff := make([dynamic]rune, 0, 128)
 	defer delete(key_buff)
 
 	val_buff := make([dynamic]rune, 0, 128)
 	defer delete(val_buff)
 
 	values := make(map[string]string, allocator)
-	
+
 	reading_key := true // to know when we string that's being read is key or value
 	start_reading := false // used to ignore the spaces before actual key/value string (spaces after are trimed by strings.trim_right_space)
 	for char in data {
@@ -814,7 +813,7 @@ parse_engine_configuration_file :: proc(f: ^os.File, allocator := context.alloca
 load_value :: proc(key, value: string, settings_strings_allocator: runtime.Allocator, settings := engine_configuration.settings, options := engine_configuration.options) {
 	setting_loaded := load_value_settings(key, value, settings, settings_strings_allocator)
 	if setting_loaded do return
-		
+
 	load_value_options(key, value, options)
 }
 
@@ -834,7 +833,7 @@ load_value_settings :: proc(key, value: string, structure: any, strings_allocato
 
 			(cast(^f32)field_any.data)^ = float
 			return true
-		case runtime.Type_Info_Integer: 
+		case runtime.Type_Info_Integer:
 			if config_tag != key do continue
 
 			integer, ok := strconv.parse_int(value)
@@ -860,7 +859,7 @@ load_value_settings :: proc(key, value: string, structure: any, strings_allocato
 
 load_value_options :: proc(key, value: string, structure: any) {
 	// if option is false or undefined, leave as Odin's zero value
-	if value == OPTION_FLAG_FALSE_STRING || value == string(UNDEFINED_CONFIG_VALUE[:]) do return 
+	if value == OPTION_FLAG_FALSE_STRING || value == string(UNDEFINED_CONFIG_VALUE[:]) do return
 
 	for field in reflect.struct_fields_zipped(structure.id) {
 		config_tag := reflect.struct_tag_get(field.tag, CONFIG_TAG) // we need conifg tag for certain types
@@ -874,7 +873,7 @@ load_value_options :: proc(key, value: string, structure: any) {
 			if config_tag != "" && config_tag == key && (struct_type == .Option || struct_type == .Option_Feature) do load_handle_option_struct(value, field_any)
 			else if struct_type == .Option_Flags || struct_type == .Option_Feature_Flags do load_handle_option_flags_struct(key, field_any)
 			else do load_value_options(key, value, field_any)
-		case runtime.Type_Info_Enum: 
+		case runtime.Type_Info_Enum:
 			if config_tag != "" && config_tag == key do load_handle_enum(info, &t, value, field_any)
 			else do continue
 		case runtime.Type_Info_Bit_Set: load_handle_bit_set(info, &t, key, field_any)
@@ -894,7 +893,7 @@ load_handle_enum :: proc(info: ^runtime.Type_Info, enum_info: ^runtime.Type_Info
 load_handle_bit_set :: proc(info: ^runtime.Type_Info, bit_set_info: ^runtime.Type_Info_Bit_Set, key: string, field: any) {
 	base_enum_info, success := unwrap_enum_from_named(bit_set_info.elem)
 	if !success do return
-	
+
 	enum_info := base_enum_info.variant.(runtime.Type_Info_Enum)
 
 	for n, i in enum_info.names {
@@ -911,7 +910,7 @@ load_handle_option_struct :: proc(value: string, structure: any) {
 	option_info := type_info_of(option_any.id)
 	base_enum_info, success := unwrap_enum_from_named(option_info)
 	if !success do return
-	
+
 	enum_info := base_enum_info.variant.(runtime.Type_Info_Enum)
 
 	names: []string // these are value names
@@ -919,7 +918,7 @@ load_handle_option_struct :: proc(value: string, structure: any) {
 	// get names from enum directly if they're not present
 	if names_any == nil || (cast(^[^]string)names_any.data)^ == nil do names = enum_info.names
 	else do names = ((cast(^[^]string)names_any.data)^)[:len(enum_info.values)]
-	
+
 	for n, i in names {
 		if value == n do set_enum_value_by_rawptr(option_any.data, option_info.size, enum_info.values[i])
 	}
@@ -930,14 +929,14 @@ load_handle_option_flags_struct :: proc(key: string, structure: any) {
 	bits_any := reflect.struct_field_value_by_name(structure, "bits", allow_using = true) // enum
 	names_any := reflect.struct_field_value_by_name(structure, "names", allow_using = true) // enumerated array
 	if bits_any == nil do return
-	
+
 	bits_info := type_info_of(bits_any.id)
 	bit_set_info, is_bits := bits_info.variant.(runtime.Type_Info_Bit_Set)
 	if !is_bits do return
-	
+
 	enum_base_info, success := unwrap_enum_from_named(bit_set_info.elem)
 	if !success do return
-	
+
 	enum_info := enum_base_info.variant.(runtime.Type_Info_Enum)
 
 	names: []string
@@ -991,9 +990,9 @@ get_engine_configuration_structure_type :: proc(structure: any) -> Engine_Struct
 	unwrapped := unwrap_named_type(info)
 	struct_info, ok := unwrapped.variant.(runtime.Type_Info_Struct)
 	if !ok do return .Not_Struct
-	
+
 	if struct_info.field_count != 2 && struct_info.field_count != 3 do return .Other
-	
+
 	option := reflect.struct_field_value_by_name(structure, "option", allow_using = true)
 	bits := reflect.struct_field_value_by_name(structure, "bits", allow_using = true)
 	names_any := reflect.struct_field_value_by_name(structure, "names", allow_using = true)

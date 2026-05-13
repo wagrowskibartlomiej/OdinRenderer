@@ -34,7 +34,7 @@ Renderer_State :: struct {
 Core_Vk_State :: struct {
 	data: rawptr,
 	vklib: dynlib.Library,
-	resource_flags: Vulkan_Static_State_Resource_Flags,
+	resource_flags: Vulkan_Core_State_Resource_Flags,
 	instance: Instance_State,
 	debug: Debug_State,
 	physical_devices: Physical_Devices_State,
@@ -44,6 +44,9 @@ Core_Vk_State :: struct {
 	render_passes: Render_Passes_State,
 	pipelines: Pipelines_State,
 	framebuffers: Framebuffers_State,
+	shaders: Shaders_State,
+	descriptors: Descriptors_State,
+	images: Images_State,
 }
 
 Instance_State :: struct {
@@ -100,7 +103,7 @@ Queue_Indexes :: struct {
 
 // Flags that are used to check which initalization resource were created, so when it's cleanup time,
 // or when resources need to be recreated it can be check using these flags
-Vulkan_Static_State_Resource_Flag :: enum {
+Vulkan_Core_State_Resource_Flag :: enum {
 	Library,
 	Instance,
 	Debug,
@@ -111,8 +114,11 @@ Vulkan_Static_State_Resource_Flag :: enum {
 	Render_Passes,
 	Pipelines,
 	Framebuffers,
+	Descriptors,
+	Shaders,
+	Images,
 }
-Vulkan_Static_State_Resource_Flags :: bit_set[Vulkan_Static_State_Resource_Flag]
+Vulkan_Core_State_Resource_Flags :: bit_set[Vulkan_Core_State_Resource_Flag]
 
 initialize_vulkan :: proc(renderer: ^Renderer_State, engine_state: ^Engine_Global_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	load_vklib(renderer)
@@ -129,6 +135,8 @@ initialize_vulkan :: proc(renderer: ^Renderer_State, engine_state: ^Engine_Globa
 			log.fatal("Cannot create debug utils messenger")
 			return
 		}
+	} else {
+		log.info("Debug layers option disabled")
 	}
 
 	success = create_surface(&renderer.core, &engine_state.window, allocator, callbacks)
@@ -149,11 +157,33 @@ initialize_vulkan :: proc(renderer: ^Renderer_State, engine_state: ^Engine_Globa
 		return
 	}
 
+	gpu_initalize_memory_state(&renderer.memory)
+	gpu_initalize_resources(&renderer.resources)
+	gpu_allocate_default_memory_blocks()
+
 	NO_OLD_SWAPCHAIN: vk.SwapchainKHR : {}
 
 	success = create_swapchain(&renderer.core, engine_state.window.handle, NO_OLD_SWAPCHAIN, allocator, callbacks)
 	if !success {
 		log.fatal("Failed to create swapchain")
+		return
+	}
+
+	success = initalize_shaders_state(&renderer.core)
+	if !success {
+		log.fatal("Failed to initialize shaders")
+		return
+	}
+
+	success = initalize_images_state(&renderer.core, callbacks)
+	if !success {
+		log.fatal("Failed to initalize images")
+		return
+	}
+
+	success = initialize_descriptors(&renderer.core, callbacks)
+	if !success {
+		log.fatal("Failed to initalize descriptors")
 		return
 	}
 
@@ -163,7 +193,7 @@ initialize_vulkan :: proc(renderer: ^Renderer_State, engine_state: ^Engine_Globa
 		return
 	}
 
-	success = create_graphics_pipelines(&renderer.core, &engine_state.assets, allocator, temp_allocator, callbacks)
+	success = create_graphics_pipelines(&renderer.core, allocator, temp_allocator, callbacks)
 	if !success {
 		log.fatal("Failed to create graphics pipelines")
 		return
@@ -185,7 +215,12 @@ cleanup_vulkan :: proc(renderer: ^Renderer_State, allocator := context.allocator
 	if .Framebuffers in renderer.core.resource_flags do cleanup_framebuffers(&renderer.core)
 	if .Pipelines in renderer.core.resource_flags do cleanup_graphics_pipelines(&renderer.core, allocator, callbacks)
 	if .Render_Passes in renderer.core.resource_flags do cleanup_renderer_passes(&renderer.core, callbacks)
+	if .Descriptors in renderer.core.resource_flags do cleanup_descriptors(&renderer.core, callbacks)
+	if .Images in renderer.core.resource_flags do cleanup_images_state(&renderer.core, callbacks)
+	if .Shaders in renderer.core.resource_flags do cleanup_shaders_state(&renderer.core, callbacks)
 	if .Swapchain in renderer.core.resource_flags do cleanup_swapchain(&renderer.core, allocator, callbacks)
+	gpu_cleanup_resources(&renderer.resources)
+	gpu_cleanup_memory_state(renderer.memory)
 	if .Surface in renderer.core.resource_flags do cleanup_surface(&renderer.core, callbacks)
 	if .Device in renderer.core.resource_flags do cleanup_device(&renderer.core, callbacks)
 	if .Physical_Device in renderer.core.resource_flags do cleanup_physical_devices(&renderer.core, allocator)
@@ -195,7 +230,7 @@ cleanup_vulkan :: proc(renderer: ^Renderer_State, allocator := context.allocator
 }
 
 load_vklib :: proc(state: ^Renderer_State) {
-	if .Library in state.core.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Static_State_Resource_Flag.Library)
+	if .Library in state.core.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Core_State_Resource_Flag.Library)
 
 	when ODIN_OS == .Linux do vk_lib_name :: "libvulkan.so"
 	else when ODIN_OS == .Windows do vk_lib_name :: "vulkan-1.dll"
@@ -206,7 +241,7 @@ load_vklib :: proc(state: ^Renderer_State) {
 	if !loaded do log.panic("Cannot load Vulkan dynamic library")
 	when CONFIG_VERBOSE_LOG do log.debug("Vulkan dynamic library loaded")
 
-	set_resource_flag(&state.core.resource_flags, Vulkan_Static_State_Resource_Flag.Library)
+	set_resource_flag(&state.core.resource_flags, Vulkan_Core_State_Resource_Flag.Library)
 
 	vk_get_instance_proc_addr_name, found := dynlib.symbol_address(state.core.vklib, "vkGetInstanceProcAddr")
 	if !found do log.panic("Cannot found addres of 'vkGetInstanceProcAddr'")
@@ -218,18 +253,18 @@ load_vklib :: proc(state: ^Renderer_State) {
 
 unload_vklib :: proc(state: ^Renderer_State) {
 	if .Library not_in state.core.resource_flags {
-		log_called_when_resource_unset(#procedure, Vulkan_Static_State_Resource_Flag.Library)
+		log_called_when_resource_unset(#procedure, Vulkan_Core_State_Resource_Flag.Library)
 		return
 	}
 	unloaded := dynlib.unload_library(state.core.vklib)
 	if !unloaded do log.errorf("Failed to unload Vulkan library: %v", dynlib.last_error())
 	when CONFIG_VERBOSE_LOG do log.debug("Unloaded Vulkan library")
 
-	unset_resource_flag(&state.core.resource_flags, Vulkan_Static_State_Resource_Flag.Library)
+	unset_resource_flag(&state.core.resource_flags, Vulkan_Core_State_Resource_Flag.Library)
 }
 
 create_instance :: proc(state: ^Core_Vk_State, allocator := context.allocator, temp_allocator := context.temp_allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
-	if .Instance in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Static_State_Resource_Flag.Instance)
+	if .Instance in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Core_State_Resource_Flag.Instance)
 	// Check for 1.0 implementation
 	_, found := dynlib.symbol_address(state.vklib, "vkEnumerateInstanceVersion")
 	if !found do log.info("Vulkan instance version: 1.0.0")
@@ -331,7 +366,7 @@ create_instance :: proc(state: ^Core_Vk_State, allocator := context.allocator, t
 	vk.load_proc_addresses_instance(state.instance.handle)
 	when CONFIG_VERBOSE_LOG do log.debug("Instance procedure addresses loaded")
 
-	set_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Instance)
+	set_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Instance)
 
 	success = true
 	return
@@ -339,7 +374,7 @@ create_instance :: proc(state: ^Core_Vk_State, allocator := context.allocator, t
 
 cleanup_instance :: proc(state: ^Core_Vk_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Instance not_in state.resource_flags {
-		log_called_when_resource_unset(#procedure, Vulkan_Static_State_Resource_Flag.Instance)
+		log_called_when_resource_unset(#procedure, Vulkan_Core_State_Resource_Flag.Instance)
 		return
 	}
 	vk.DestroyInstance(state.instance.handle, callbacks)
@@ -352,7 +387,7 @@ cleanup_instance :: proc(state: ^Core_Vk_State, allocator := context.allocator, 
 	delete(state.instance.available_layers, allocator)
 	when CONFIG_VERBOSE_LOG do log.debug("Instance resources released")
 
-	unset_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Instance)
+	unset_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Instance)
 }
 
 
@@ -362,7 +397,7 @@ create_debug_utils :: proc(state: ^Core_Vk_State, context_state: ^Context_State,
 	assert(state != nil && context_state != nil, "State and context state pointers must not be nil")
 	severity := severity // compiler hint
 
-	if .Debug in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Static_State_Resource_Flag.Debug)
+	if .Debug in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Core_State_Resource_Flag.Debug)
 	message_types := vk.DebugUtilsMessageTypeFlagsEXT{.GENERAL, .VALIDATION, .PERFORMANCE, .DEVICE_ADDRESS_BINDING} // if we are enabling debug layers I don't see a point to not want all messages
 	// get severity if it is not given as parameter
 	if severity == {} {
@@ -405,7 +440,7 @@ create_debug_utils :: proc(state: ^Core_Vk_State, context_state: ^Context_State,
 	}
 	when CONFIG_VERBOSE_LOG do log.debug("Debug utils messenger created successfuly")
 
-	set_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Debug)
+	set_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Debug)
 
 	success = true
 	return
@@ -413,14 +448,14 @@ create_debug_utils :: proc(state: ^Core_Vk_State, context_state: ^Context_State,
 
 cleanup_debug_utils :: proc(state: ^Core_Vk_State, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Debug not_in state.resource_flags {
-		log_called_when_resource_unset(#procedure, Vulkan_Static_State_Resource_Flag.Debug)
+		log_called_when_resource_unset(#procedure, Vulkan_Core_State_Resource_Flag.Debug)
 		return
 	}
 
 	vk.DestroyDebugUtilsMessengerEXT(state.instance.handle, state.debug.messenger, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Debug utils messenger destroyed")
 
-	unset_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Debug)
+	unset_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Debug)
 }
 
 debug_utils_default_engine_callback : vk.ProcDebugUtilsMessengerCallbackEXT : proc "system" (severity: vk.DebugUtilsMessageSeverityFlagsEXT, message_types: vk.DebugUtilsMessageTypeFlagsEXT, callback_data: ^vk.DebugUtilsMessengerCallbackDataEXT, user_data: rawptr) -> b32 {
@@ -664,7 +699,7 @@ I do not see it that important as when targeting PCs
 ************************************************************************/
 
 pick_physical_device :: proc(state: ^Core_Vk_State, allocator := context.allocator, temp_allocator := context.temp_allocator) -> (success: bool) {
-	if .Physical_Device in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Static_State_Resource_Flag.Physical_Device)
+	if .Physical_Device in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Core_State_Resource_Flag.Physical_Device)
 	count: u32
 
 	result := vk.EnumeratePhysicalDevices(state.instance.handle, &count, nil)
@@ -702,7 +737,7 @@ pick_physical_device :: proc(state: ^Core_Vk_State, allocator := context.allocat
 		log.infof("%v. %v", i+1, dev.name)
 	}
 
-	set_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Physical_Device)
+	set_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Physical_Device)
 
 	success = true
 	return
@@ -710,7 +745,7 @@ pick_physical_device :: proc(state: ^Core_Vk_State, allocator := context.allocat
 
 cleanup_physical_devices :: proc(state: ^Core_Vk_State, allocator := context.allocator) {
 	if .Physical_Device not_in state.resource_flags {
-		log_called_when_resource_unset(#procedure, Vulkan_Static_State_Resource_Flag.Physical_Device)
+		log_called_when_resource_unset(#procedure, Vulkan_Core_State_Resource_Flag.Physical_Device)
 		return
 	}
 
@@ -727,7 +762,7 @@ cleanup_physical_devices :: proc(state: ^Core_Vk_State, allocator := context.all
 
 	state.physical_devices.active = nil
 
-	unset_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Physical_Device)
+	unset_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Physical_Device)
 }
 
 //WARN: Procedure allocates string names with given allocator, names then need to be freed accordingly
@@ -980,7 +1015,7 @@ physical_device_evaluate_queues :: proc(queue_properties: []vk.QueueFamilyProper
 }
 
 create_device :: proc(state: ^Core_Vk_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
-	if .Device in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Static_State_Resource_Flag.Device)
+	if .Device in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Core_State_Resource_Flag.Device)
 	queue_priority_max: f32 = 1
 
 	// using to make indexes easier to access
@@ -1098,7 +1133,7 @@ create_device :: proc(state: ^Core_Vk_State, allocator := context.allocator, cal
 	}
 	when CONFIG_VERBOSE_LOG do log.debugf("Chosen queue indexes: (G) %v, (T) %v, (C) %v", graphics, transfer, compute)
 
-	set_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Device)
+	set_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Device)
 
 	success = true
 	return
@@ -1106,14 +1141,14 @@ create_device :: proc(state: ^Core_Vk_State, allocator := context.allocator, cal
 
 cleanup_device :: proc(state: ^Core_Vk_State, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Device not_in state.resource_flags {
-		log_called_when_resource_unset(#procedure, Vulkan_Static_State_Resource_Flag.Device)
+		log_called_when_resource_unset(#procedure, Vulkan_Core_State_Resource_Flag.Device)
 		return
 	}
 
 	vk.DestroyDevice(state.device.handle, callbacks)
 	when CONFIG_VERBOSE_LOG do log.debug("Device destroyed")
 
-	unset_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Device)
+	unset_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Device)
 }
 
 check_all_flags :: proc(flags: bit_set[$T]) -> (all_present: bool){

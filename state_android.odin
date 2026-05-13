@@ -25,6 +25,7 @@ Engine_Android_Flag :: enum {
 	Focus,
 	Window_Ready,
 	Renderer_Initalized,
+	Uploaded_To_GPU,
 }
 Engine_Android_Flags :: bit_set[Engine_Android_Flag]
 

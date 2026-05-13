@@ -10,7 +10,7 @@ Surface_State :: struct {
 
 // Creates platform surface for Vulkan.
 create_surface :: proc(state: ^Core_Vk_State, window_state: ^Window_State, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) -> (success: bool) {
-	if .Surface in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Static_State_Resource_Flag.Surface)
+	if .Surface in state.resource_flags do log_called_when_resource_set(#procedure, Vulkan_Core_State_Resource_Flag.Surface)
 
 	when CONFIG_BUILD_TARGET == Build_Targets[.Pc] do success = glfw_create_surface(state, window_state, callbacks)
 	else when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] {
@@ -28,7 +28,7 @@ create_surface :: proc(state: ^Core_Vk_State, window_state: ^Window_State, alloc
 // Cleanes up platform surface for Vulkan.
 cleanup_surface :: proc(state: ^Core_Vk_State, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
 	if .Surface not_in state.resource_flags {
-		log_called_when_resource_unset(#procedure, Vulkan_Static_State_Resource_Flag.Surface)
+		log_called_when_resource_unset(#procedure, Vulkan_Core_State_Resource_Flag.Surface)
 		return
 	}
 
@@ -38,5 +38,5 @@ cleanup_surface :: proc(state: ^Core_Vk_State, callbacks := VULKAN_GLOBAL_ALLOCA
 		else do log.debug("Android surface destroyed")
 	}
 
-	unset_resource_flag(&state.resource_flags, Vulkan_Static_State_Resource_Flag.Surface)
+	unset_resource_flag(&state.resource_flags, Vulkan_Core_State_Resource_Flag.Surface)
 }
