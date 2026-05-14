@@ -89,7 +89,8 @@ android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Per
 
 	if .Search_Internal_Storage in open_options {
 		p := app.activity.internalDataPath
-		return _handle_storage_file_opening_internal(name, p, &builder, sys_flags, perm, open_options, app)
+		f, err := _handle_storage_file_opening_internal(name, p, &builder, sys_flags, perm, open_options, app)
+		if err == nil do return f, err
 	}
 
 	if .Search_External_Storage in open_options {
@@ -97,7 +98,7 @@ android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Per
 		return _handle_storage_file_opening_internal(name, p, &builder, sys_flags, perm, open_options, app)
 	}
 
-	return
+	return nil, .Not_Exist
 }
 
 @(private="file")

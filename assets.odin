@@ -5,7 +5,6 @@ import "base:runtime"
 
 import "obj"
 
-import "core:c"
 import "core:hash/xxhash"
 import "core:log"
 import "core:mem"
@@ -924,8 +923,8 @@ load_asset_memory :: proc(asset: ^Asset, manager: ^Assets_Manager) -> os.Error {
 // NOTE: Asset's `file type` should be set before calling to ensure proper cleanup
 unload_asset_memory :: proc(asset: ^Asset, manager: ^Assets_Manager) {
 	_unload_asset_memory_internal(asset, manager.asset_allocator)
-
 }
+
 // NOTE: Asset's `file type` should be set before calling to ensure proper loading
 @(private = "file")
 _load_asset_memory_internal :: proc(
