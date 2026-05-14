@@ -6,10 +6,10 @@ import "vendor:glfw"
 
 // Creates window using GLFW. Prefer using `create_window`.
 create_glfw_window :: proc(state: ^Window_State, app_name : cstring = APPLICATION_NAME, width : c.int = 800, height: c.int = 600) -> (success: bool) {
-	glfw.InitHint(glfw.PLATFORM, glfw.PLATFORM_X11) // This is important for Renderdoc when using linux, Wayland may cause trouble and this would probably help
+	//glfw.InitHint(glfw.PLATFORM, glfw.PLATFORM_X11) // This is important for Renderdoc when using linux, Wayland may cause trouble and this would probably help
 	if !glfw.Init() {
 		log.errorf("GLFW not initialized")
-		return 
+		return
 	}
 
 	when CONFIG_VERBOSE_LOG do log.debug("GLFW initialized")
