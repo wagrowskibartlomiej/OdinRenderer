@@ -3,9 +3,11 @@ package engine
 
 import "base:runtime"
 
+import "core:os"
 import "core:log"
-import "core:slice"
 import "core:time"
+import "core:slice"
+import "core:strconv"
 
 import vk "vendor:vulkan"
 
@@ -68,9 +70,50 @@ engine_renderer_cleanup :: proc(state: ^Engine_Global_State) {
 	avg_fps := 1.0 / avg_frame_time_s
 	avg_frame_time_ms := avg_frame_time_s * 1000
 	log.infof("Avg frame time: %.4f ms (%.2f FPS)", avg_frame_time_ms, avg_fps)
+	engine_write_performance_stats(avg_fps, avg_frame_time_ms)
 	cleanup_frame_resources(&state.renderer.core, &state.renderer.dyn)
 	cleanup_vulkan(&state.renderer)
 	cleanup_window(&state.window)
+}
+
+engine_write_performance_stats :: proc(avg_fps: f64, avg_frame_time_ms: f64) {
+	f, err := engine_open("performance.txt", {.Create, .Trunc, .Write})
+	if err != nil {
+		log.errorf("Failed to save performance stats into file: %v", err)
+		return
+	}
+	defer os.close(f)
+	counter : i64 = 0
+
+	// Bigger just in case
+	float_buffer: [128]byte
+
+	first := "Average frame time:"
+	os.write_at(f, transmute([]byte)first, counter)
+	counter += i64(slice.size(transmute([]byte)first))
+
+	avg_time_str := strconv.write_float(float_buffer[:], avg_frame_time_ms, 'f', 4, 64)
+	// it adds sign, so we're just gonna change it into space (we can safely do this since backing buffer is on stack, not in rodata)
+	(transmute([]byte)avg_time_str)[0] = ' '
+	os.write_at(f, transmute([]byte)avg_time_str, counter)
+	counter += i64(slice.size(transmute([]byte)avg_time_str))
+
+	first_sep := " ms\n"
+	os.write_at(f, transmute([]byte)first_sep, counter)
+	counter += i64(slice.size(transmute([]byte)first_sep))
+
+	second := "Average FPS:"
+	os.write_at(f, transmute([]byte)second, counter)
+	counter += i64(slice.size(transmute([]byte)second))
+
+	avg_fps_str := strconv.write_float(float_buffer[:], avg_fps, 'f', 4, 64)
+	// same as above
+	(transmute([]byte)avg_fps_str)[0] = ' '
+	os.write_at(f, transmute([]byte)avg_fps_str, counter)
+	counter += i64(slice.size(transmute([]byte)avg_fps_str))
+
+	os.write_at(f, []byte{'\n'}, counter)
+	counter += 1
 }
 
 engine_poll_events :: proc(state: ^Engine_Global_State) {

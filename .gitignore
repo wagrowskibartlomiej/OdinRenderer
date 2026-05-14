@@ -6,3 +6,4 @@ OdinRenderer
 .gdb_history
 gdb.txt
 *.engine
+performance.txt
