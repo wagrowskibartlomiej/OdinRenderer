@@ -814,12 +814,11 @@ read_asset_file :: proc(
 ) {
 	if should_ingore_file(file) do return .Asset_On_Ignore_List
 
-	f, o_err := os.open(file)
+	f, o_err := engine_open(file)
 	if o_err != nil {
 		log.errorf("Opening file '%v' failure: %v", file, o_err)
 		return o_err
 	}
-	defer os.close(f)
 
 	abs_path, abs_err := fp.abs(file, temp_allocator)
 	if abs_err != nil {
@@ -886,10 +885,10 @@ cleanup_asset :: proc(asset: ^Asset, manager: ^Assets_Manager, destroy_key: bool
 	if asset._internal_metadata != nil {
 		err := os.close(asset._internal_metadata.source)
 		if err != nil do log.errorf("Asset file closing failure: %v", err)
-
-		// Free despite not closing, I don't think there is much to do if something like this happens
-		free_err := free(asset._internal_metadata, manager.allocator)
-		asset._internal_metadata = nil
+		else {
+			free_err := free(asset._internal_metadata, manager.allocator)
+			asset._internal_metadata = nil
+		}
 	}
 
 	id := generate_asset_id(asset.name, asset.pkg, asset.file_type, manager.hash_state)
