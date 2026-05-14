@@ -39,6 +39,7 @@ Android_Asset_File_Data :: struct {
 	internal_offset, start_offset, end_offset: i64, // Used for using linux.read to prevent destroying AAsset global offset when ommiting AAsset Manager
 }
 
+// TODO: Fix writing to external and internal storage on Android
 // Thread safe flag is only used for APK, app pointer needs to be passed
 android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Permissions_Default, open_options := Android_Search_Everywhere_Not_Thread_Safe_Flags) -> (f: ^os.File, err: os.Error) {
 	// Maybe if unsuporrted flags && only search asset return early? idk maybe let open it cause android proc will just return unsupported and let use the file in other ways?
