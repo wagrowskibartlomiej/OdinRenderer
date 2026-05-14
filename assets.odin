@@ -660,6 +660,7 @@ build_asset_packed :: proc(
 
 	when CONFIG_VERBOSE_LOG do log.debug("Starting replacement of asset file")
 	os.close(manager.assets_file)
+	os.close(_old_file)
 	rm_err := os.remove(_old_name)
 	if rm_err == .Not_Exist {
 		log.info("Assets file not detected, writing new one normally")
@@ -672,10 +673,22 @@ build_asset_packed :: proc(
 	rn_err := os.rename(temp_name, _old_name)
 	if rn_err != nil {
 		log.errorf("Asset file replacement failure: %v", rn_err)
+		return false
 	}
 
+	// Now after save we need to reopen it,
+	// cause we want to allow calling this porcedure mid execution if needed
+	new_f, open_err := engine_open(_old_name)
+    if open_err != nil {
+        log.errorf("Failed to re-open assets file after build: %v", open_err)
+        return false
+    }
+    manager.assets_file = new_f
+
+    when CONFIG_VERBOSE_LOG do log.info("Assets packed and re-opened successfully")
 	return true
 }
+
 @(private = "file")
 _assets_packed_write_regular :: proc(
 	asset: Asset,
@@ -814,6 +827,8 @@ read_asset_file :: proc(
 ) {
 	if should_ingore_file(file) do return .Asset_On_Ignore_List
 
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+
 	f, o_err := engine_open(file)
 	if o_err != nil {
 		log.errorf("Opening file '%v' failure: %v", file, o_err)
@@ -828,7 +843,7 @@ read_asset_file :: proc(
 
 	name := fp.base(file)
 
-	pkg := fp.base(fp.dir(abs_path))
+	pkg := fp.base(fp.dir(abs_path, temp_allocator))
 
 	if pkg == "." || pkg == "" || pkg == "/" || pkg == "\\" {
 		pkg = UNKNOWNPKG
