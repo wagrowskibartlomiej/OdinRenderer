@@ -843,7 +843,7 @@ read_asset_file :: proc(
 
 	name := fp.base(file)
 
-	pkg := fp.base(fp.dir(abs_path, temp_allocator))
+	pkg := fp.base(fp.dir(abs_path))
 
 	if pkg == "." || pkg == "" || pkg == "/" || pkg == "\\" {
 		pkg = UNKNOWNPKG
