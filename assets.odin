@@ -808,42 +808,35 @@ read_asset_file :: proc(
 	manager: ^Assets_Manager,
 	load_data := false,
 	append_to_packed_build := true,
-	/* Implement */
 	temp_allocator := context.temp_allocator,
 ) -> (
 	err: Assets_Error,
 ) {
-	file := file
 	if should_ingore_file(file) do return .Asset_On_Ignore_List
 
-	f: ^os.File
-	f, err = os.open(file)
-	if err != nil {
-		log.errorf("Opening file '%v' failure: %v", file, err)
-		return err
+	f, o_err := os.open(file)
+	if o_err != nil {
+		log.errorf("Opening file '%v' failure: %v", file, o_err)
+		return o_err
 	}
-	defer if err != nil do os.close(f)
+	defer os.close(f)
 
-	// temp strings, if asset would be added, then we clone pkg and name into strings arena
-	pkg, name, abs: string
-
-	if !fp.is_abs(file) {
-		name = file
-		abs, err = fp.abs(file, temp_allocator)
-
-		if err != nil do pkg = UNKNOWNPKG
-		else do pkg = fp.base(fp.dir(abs))
-	} else {
-		abs = file
-		name = fp.base(abs)
-		pkg = fp.base(fp.dir(abs))
+	abs_path, abs_err := fp.abs(file, temp_allocator)
+	if abs_err != nil {
+		log.errorf("Failed to get absolute path for %v: %v", file, abs_err)
+		return abs_err
 	}
 
-	if pkg == "." do pkg = UNKNOWNPKG // base can return '.' if empty string
+	name := fp.base(file)
+
+	pkg := fp.base(fp.dir(abs_path))
+
+	if pkg == "." || pkg == "" || pkg == "/" || pkg == "\\" {
+		pkg = UNKNOWNPKG
+	}
 
 	ass: Asset
 	ass._internal_metadata = new(Asset_Editor_Metadata, manager.allocator)
-	defer if err != nil do free(ass._internal_metadata, manager.allocator)
 
 	ass._internal_metadata.source = f
 	ass.pkg = pkg
@@ -852,30 +845,35 @@ read_asset_file :: proc(
 
 	id := generate_asset_id(ass.name, ass.pkg, ass.file_type, manager.hash_state)
 
-	exists := find_if_asset_exists_by_id(id, manager)
-	if exists {
-		log.errorf("Asset of ID: %v already exists", id)
+	if id in manager.resources {
+		log.errorf("Asset of ID: %v (%v) already exists", id, ass.name)
+		free(ass._internal_metadata, manager.allocator)
 		return .Asset_Already_Exists
 	}
 
-	// Backup strings into strings arena
 	ass.pkg = strings.clone(ass.pkg, manager._strings_arena.allocator)
 	ass.name = strings.clone(ass.name, manager._strings_arena.allocator)
 
 	ass.flags += {.Independent_File}
 	ass.type = _get_asset_type(ass)
-
 	ass.file_offset = 0
+
 	size, size_err := os.file_size(f)
 	if size_err != nil do log.warnf("File size retrieval failure: %v", size_err)
-	ass.file_size = size // set despite error, detection of the file should be made using flags anyway
+	ass.file_size = size
 
 	if load_data {
 		mem_err := _load_asset_memory_internal(&ass, f, manager.asset_allocator, false)
-		if mem_err != nil do log.errorf("Loading asset's '%v:%v' memory failure: %v", ass.pkg, ass.name, mem_err)
+		if mem_err != nil {
+			log.errorf("Loading asset's '%v:%v' memory failure: %v", ass.pkg, ass.name, mem_err)
+		} else {
+			ass.flags += {.Loaded_RAM}
+		}
 	}
 
 	manager.resources[id] = ass
+
+	log.infof("[ASSET] Loaded: %v (ID: %v, Pkg: %v)", ass.name, id, ass.pkg)
 
 	return nil
 }

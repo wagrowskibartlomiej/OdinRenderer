@@ -1,12 +1,15 @@
 $ShaderDir = "./assets/shaders"
 $SpirvDir = "$ShaderDir/spirv"
 
-if (-not (Test-Path $SpirvDir)) {
-    New-Item -Path $SpirvDir -ItemType Directory | Out-Null
-}
+New-Item -ItemType Directory -Force -Path $SpirvDir | Out-Null
 
 function Compile-Shaders {
-    $Shaders = Get-ChildItem -Path $ShaderDir -Include *.vert, *.frag -File
+    $Shaders = Get-ChildItem -Path "$ShaderDir\*" -Include *.vert, *.frag -File
+
+    if ($null -eq $Shaders) {
+        Write-Warning "No shaders found in $ShaderDir"
+        return
+    }
 
     foreach ($Shader in $Shaders) {
         $FilenameNoExt = $Shader.BaseName
