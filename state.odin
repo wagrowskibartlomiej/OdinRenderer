@@ -26,6 +26,12 @@ Time_State :: struct {
 	engine_start, last_frame_start: time.Time,
 	frame_diff: time.Duration,
 	delta: f64,
+	stats: Engine_Stats,
+}
+
+Engine_Stats :: struct {
+	frame_count: u64,
+	total_frame_time: f64,
 }
 
 Context_State :: struct {

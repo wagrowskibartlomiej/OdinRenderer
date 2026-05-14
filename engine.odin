@@ -63,6 +63,11 @@ engine_renderer_init :: proc(state: ^Engine_Global_State) -> (success: bool) {
 	return true
 }
 engine_renderer_cleanup :: proc(state: ^Engine_Global_State) {
+	log.infof("Engine was running for %v", time.diff(state.time.engine_start, time.now()))
+	avg_frame_time_s := state.time.stats.total_frame_time / f64(state.time.stats.frame_count)
+	avg_fps := 1.0 / avg_frame_time_s
+	avg_frame_time_ms := avg_frame_time_s * 1000
+	log.infof("Avg frame time: %.4f ms (%.2f FPS)", avg_frame_time_ms, avg_fps)
 	cleanup_frame_resources(&state.renderer.core, &state.renderer.dyn)
 	cleanup_vulkan(&state.renderer)
 	cleanup_window(&state.window)
@@ -86,7 +91,6 @@ engine_update_logic :: proc() {
 	m := &get_global_state().mesh
 	m.rotation.y += (5 * f32(get_delta()))
 	if m.rotation.y >= 360 do m.rotation.y -= 360
-	when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] do log.infof("Frame time: %v", get_frame_time())
 }
 
 engine_upload_gpu :: proc(update: bool) {
@@ -192,6 +196,9 @@ engine_calculate_delta :: proc(state: ^Engine_Global_State) {
 	state.time.frame_diff = time.diff(state.time.last_frame_start, n)
 	state.time.delta = time.duration_seconds(state.time.frame_diff)
 	state.time.last_frame_start = n
+
+	state.time.stats.frame_count += 1
+	state.time.stats.total_frame_time += state.time.delta
 }
 
 engine_handle_buffer_upload :: proc(
