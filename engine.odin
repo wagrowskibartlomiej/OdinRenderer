@@ -8,6 +8,7 @@ import "core:log"
 import "core:time"
 import "core:slice"
 import "core:strconv"
+import sysinf "core:sys/info"
 
 import vk "vendor:vulkan"
 
@@ -69,14 +70,14 @@ engine_renderer_cleanup :: proc(state: ^Engine_Global_State) {
 	avg_frame_time_s := state.time.stats.total_frame_time / f64(state.time.stats.frame_count)
 	avg_fps := 1.0 / avg_frame_time_s
 	avg_frame_time_ms := avg_frame_time_s * 1000
-	log.infof("Avg frame time: %.4f ms (%.2f FPS)", avg_frame_time_ms, avg_fps)
+	log.infof("Avg frame time: %.4f ms (%.0f FPS)", avg_frame_time_ms, avg_fps)
 	engine_write_performance_stats(avg_fps, avg_frame_time_ms)
 	cleanup_frame_resources(&state.renderer.core, &state.renderer.dyn)
 	cleanup_vulkan(&state.renderer)
 	cleanup_window(&state.window)
 }
 
-engine_write_performance_stats :: proc(avg_fps: f64, avg_frame_time_ms: f64) {
+engine_write_performance_stats :: proc(avg_fps: f64, avg_frame_time_ms: f64, temp_allocator := context.temp_allocator) {
 	f, err := engine_open("performance.txt", {.Create, .Trunc, .Write})
 	if err != nil {
 		log.errorf("Failed to save performance stats into file: %v", err)
@@ -88,32 +89,81 @@ engine_write_performance_stats :: proc(avg_fps: f64, avg_frame_time_ms: f64) {
 	// Bigger just in case
 	float_buffer: [128]byte
 
-	first := "Average frame time:"
-	os.write_at(f, transmute([]byte)first, counter)
-	counter += i64(slice.size(transmute([]byte)first))
+	info_failed := "Unknown"
+	spec_str := "Specification\n"
+	os_str := "OS: "
+	cpu_str := "CPU: "
+	gpu_str := "GPU: "
+	ram_str := "RAM: "
 
-	avg_time_str := strconv.write_float(float_buffer[:], avg_frame_time_ms, 'f', 4, 64)
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+
+	os.write(f, transmute([]byte)spec_str)
+	log.info("Specification")
+
+	os_ver, ok := sysinf.os_version(temp_allocator)
+	os_name: string
+	if !ok {
+		os_name = info_failed
+	} else {
+		os_name = os_ver.full
+	}
+	log.infof("OS: %v", os_name)
+	engine_write_spec(f, os_str, os_name)
+
+	cpu_name := sysinf.cpu_name()
+	if cpu_name == "" {
+		cpu_name = info_failed
+	}
+	log.infof("CPU: %v", cpu_name)
+	engine_write_spec(f, cpu_str, cpu_name)
+
+	gpu_name := string(get_global_state().renderer.core.physical_devices.active.name)
+	if gpu_name == "" {
+		gpu_name = info_failed
+	}
+	log.infof("GPU: %v", gpu_name)
+	engine_write_spec(f, gpu_str, gpu_name)
+
+	total_ram, _, _, _, success := sysinf.ram_stats()
+	if success {
+		bytes_float, unit := logs_simplify_bytes(u64(total_ram))
+		bytes_str := strconv.write_float(float_buffer[:], bytes_float, 'f', 2, 64)
+		log.infof("RAM: %v %v", bytes_str[1:], unit)
+		engine_write_spec(f, ram_str, bytes_str[1:], unit)
+	} else {
+		log.infof("RAM: %v", info_failed)
+		engine_write_spec(f, ram_str, info_failed)
+	}
+
+	first := "Average frame time:"
+	os.write(f, transmute([]byte)first)
+
+	avg_time_str := strconv.write_float(float_buffer[:], avg_frame_time_ms, 'f', 6, 64)
 	// it adds sign, so we're just gonna change it into space (we can safely do this since backing buffer is on stack, not in rodata)
 	(transmute([]byte)avg_time_str)[0] = ' '
-	os.write_at(f, transmute([]byte)avg_time_str, counter)
-	counter += i64(slice.size(transmute([]byte)avg_time_str))
+	os.write(f, transmute([]byte)avg_time_str)
 
 	first_sep := " ms\n"
-	os.write_at(f, transmute([]byte)first_sep, counter)
-	counter += i64(slice.size(transmute([]byte)first_sep))
+	os.write(f, transmute([]byte)first_sep)
 
 	second := "Average FPS:"
-	os.write_at(f, transmute([]byte)second, counter)
-	counter += i64(slice.size(transmute([]byte)second))
+	os.write(f, transmute([]byte)second)
 
-	avg_fps_str := strconv.write_float(float_buffer[:], avg_fps, 'f', 4, 64)
+	avg_fps_str := strconv.write_float(float_buffer[:], avg_fps, 'f', 0, 64)
 	// same as above
 	(transmute([]byte)avg_fps_str)[0] = ' '
-	os.write_at(f, transmute([]byte)avg_fps_str, counter)
-	counter += i64(slice.size(transmute([]byte)avg_fps_str))
+	os.write(f, transmute([]byte)avg_fps_str)
 
-	os.write_at(f, []byte{'\n'}, counter)
-	counter += 1
+	os.write(f, []byte{'\n'})
+}
+
+engine_write_spec :: proc(f: ^os.File, keyword, value: string, end := "", new_line := "\n") {
+	os.write(f, transmute([]byte)keyword)
+	os.write(f, transmute([]byte)value)
+	if end != "" do os.write(f, []byte{' '}) // Separator if needed
+	os.write(f, transmute([]byte)end)
+	os.write(f, transmute([]byte)new_line)
 }
 
 engine_poll_events :: proc(state: ^Engine_Global_State) {

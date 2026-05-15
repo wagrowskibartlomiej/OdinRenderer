@@ -198,6 +198,7 @@ destroy_swapchain_internal :: proc(device: vk.Device, swapchain: ^Swapchain_Stat
 }
 
 recreate_swapchain :: proc(pipeline_kind: Graphics_Pipeline_Kind, allocator := context.allocator, callbacks := VULKAN_GLOBAL_ALLOCATION_CALLBACKS) {
+	when CONFIG_VERBOSE_LOG do log.debug("Swapchain recreation called")
 	g := get_global_state()
 	core := &g.renderer.core
 	window_handle := g.window.handle

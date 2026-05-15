@@ -730,7 +730,12 @@ pick_physical_device :: proc(state: ^Core_Vk_State, allocator := context.allocat
 	}
 
 	unsupported := evaluate_physical_devices(devices, state.surface.handle, &state.physical_devices, allocator, temp_allocator)
-	defer delete(unsupported)
+	defer {
+		for d in unsupported {
+			delete(d.name, allocator)
+		}
+		delete(unsupported)
+	}
 
 	for dev, i in unsupported {
 		if i == 0 do log.info("Unsupported device(s):")
@@ -750,6 +755,7 @@ cleanup_physical_devices :: proc(state: ^Core_Vk_State, allocator := context.all
 	}
 
 	for d in state.physical_devices.supported {
+		delete (d.name, allocator)
 		delete (d.queues_properties, allocator)
 		delete (d.available_extensions, allocator)
 		delete (d.available_layers, allocator)
@@ -786,8 +792,8 @@ evaluate_physical_devices :: proc(devices: []vk.PhysicalDevice, surface: vk.Surf
 
 		// Get name for every device, to make it identifiable
 		vk.GetPhysicalDeviceProperties(handle, &properties)
-		name = strings.unsafe_string_to_cstring(string(properties.deviceName[:]))
-		defer if !success do append(&unsupported, Physical_Device{handle, strings.clone_to_cstring(string(name), allocator)})
+		name = strings.clone_to_cstring(strings.truncate_to_byte(string(properties.deviceName[:]), 0), allocator)
+		defer if !success do append(&unsupported, Physical_Device{handle, name})
 
 		available_extensions, success = query_device_extensions(handle, nil, allocator)
 		if !success {
