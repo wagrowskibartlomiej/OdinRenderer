@@ -235,10 +235,23 @@ load_vklib :: proc(state: ^Renderer_State) {
 	when ODIN_OS == .Linux do vk_lib_name :: "libvulkan.so"
 	else when ODIN_OS == .Windows do vk_lib_name :: "vulkan-1.dll"
 	else do #panic("Vulkan lib name file not specified for " + ODIN_OS + " OS")
+	vk_lib_name_fallback_linux :: "libvulkan.so.1"
 
 	loaded: bool
 	state.core.vklib, loaded = dynlib.load_library(vk_lib_name)
-	if !loaded do log.panic("Cannot load Vulkan dynamic library")
+	if !loaded {
+		err := dynlib.last_error()
+		when ODIN_OS != .Linux do log.panicf("Cannot load Vulkan dynamic library, last err: %v", err)
+		else {
+			log.error("Cannot load Vulkan dynamic library: %v", err)
+			log.infof("Trying to load by fallback name %v", vk_lib_name_fallback_linux)
+			state.core.vklib, loaded = dynlib.load_library(vk_lib_name_fallback_linux)
+			if !loaded {
+				err = dynlib.last_error()
+				log.panicf("Fallback name failed too: %v", err)
+			}
+		}
+	}
 	when CONFIG_VERBOSE_LOG do log.debug("Vulkan dynamic library loaded")
 
 	set_resource_flag(&state.core.resource_flags, Vulkan_Core_State_Resource_Flag.Library)
