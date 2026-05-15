@@ -981,8 +981,8 @@ physical_device_score_rating :: proc(device: ^Supported_Physical_Device) -> (sco
 }
 
 sort_by_score :: proc(i, j: Supported_Physical_Device) -> slice.Ordering {
-	if i.score > j.score do return .Greater
-	else if i.score < j.score do return .Less
+	if i.score > j.score do return .Less
+	else if i.score < j.score do return .Greater
 	else do return .Equal
 }
 
