@@ -243,7 +243,7 @@ load_vklib :: proc(state: ^Renderer_State) {
 		err := dynlib.last_error()
 		when ODIN_OS != .Linux do log.panicf("Cannot load Vulkan dynamic library, last err: %v", err)
 		else {
-			log.error("Cannot load Vulkan dynamic library: %v", err)
+			log.warnf("Cannot load Vulkan dynamic library: %v", err)
 			log.infof("Trying to load by fallback name %v", vk_lib_name_fallback_linux)
 			state.core.vklib, loaded = dynlib.load_library(vk_lib_name_fallback_linux)
 			if !loaded {
