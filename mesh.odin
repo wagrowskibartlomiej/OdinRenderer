@@ -44,8 +44,10 @@ get_model_matrix :: proc(m: Model_World_Data) -> glsl.mat4 {
 
 	model *= glsl.mat4Rotate({0, 1, 0}, f32(degrees_to_radians(Degrees(m.rotation.y))))
 
+	/*
 	radians := degrees_to_radians(-90)
 	model *= glsl.mat4Rotate({1, 0, 0}, f32(radians))
+	*/
 
 	model *= glsl.mat4Scale(m.scale)
 	return model

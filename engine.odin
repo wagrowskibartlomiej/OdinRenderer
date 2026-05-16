@@ -21,7 +21,7 @@ engine_init :: proc "contextless" (
 	context = setup_engine_state(state, procs)
 
 	state.mesh.position = {1, 1, 1}
-	state.mesh.scale = {1, 1, 1}
+	state.mesh.scale = {0.3, 0.3, 0.3}
 	initialize_engine_configuration()
 	load_configuration(get_engine_configuration()._settings_strings_arena.allocator)
 

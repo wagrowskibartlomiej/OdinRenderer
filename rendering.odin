@@ -1134,7 +1134,7 @@ end_command_buffer :: proc(buff: vk.CommandBuffer) -> (success: bool) {
 }
 
 create_vertex_buffer :: proc() -> (handle: GPU_Resource_Handle, success: bool) {
-	h, err := gpu_create(.Vertex_Buffer, .Static, 4 * mem.Megabyte, VRAM_FLAGS, false)
+	h, err := gpu_create(.Vertex_Buffer, .Static, 32 * mem.Megabyte, VRAM_FLAGS, false)
 	if err != nil {
 		log.errorf("Vertex buffer creation failure: %v", err)
 		return
@@ -1144,7 +1144,7 @@ create_vertex_buffer :: proc() -> (handle: GPU_Resource_Handle, success: bool) {
 }
 
 create_index_buffer :: proc() -> (handle: GPU_Resource_Handle, success: bool) {
-	h, err := gpu_create(.Index_Buffer, .Static, 4 * mem.Megabyte, VRAM_FLAGS, false)
+	h, err := gpu_create(.Index_Buffer, .Static, 32 * mem.Megabyte, VRAM_FLAGS, false)
 	if err != nil {
 		log.errorf("Index buffer creation failure: %v", err)
 		return
@@ -1174,7 +1174,7 @@ create_staging_buffer :: proc(
 	success: bool,
 ) {
 	//TODO: Implement general staging buffer instead of using .Vertex_Buffer
-	h, err := gpu_create(.Staging_Buffer, .Static, 4 * mem.Megabyte, STAGING_FLAGS, true)
+	h, err := gpu_create(.Staging_Buffer, .Static, 64 * mem.Megabyte, STAGING_FLAGS, true)
 	if err != nil {
 		log.errorf("Staging buffer creation failure: %v", err)
 		return
