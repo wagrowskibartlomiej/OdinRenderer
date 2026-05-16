@@ -497,14 +497,12 @@ save_handle_options :: proc(f: ^os.File, offset: ^i64, structure: any) {
 			else if struct_type == .Option_Flags || struct_type == .Option_Feature_Flags do save_handle_option_flags(f, offset, field_value_any)
 			else do save_handle_options(f, offset, field_value_any)
 		case runtime.Type_Info_Bit_Set:
-			when CONFIG_BUILD_TARGET != Build_Variants[.Release] && CONFIG_VERBOSE_LOG do log.warnf("Using plain bit_set in options is not recommended")
+			when CONFIG_BUILD_VARIANT != Build_Variants[.Release] && CONFIG_VERBOSE_LOG do log.warnf("Using plain bit_set in options is not recommended")
 			save_handle_bit_set(info, &t, f, offset, field_value_any)
 		case runtime.Type_Info_Enum:
-			when CONFIG_BUILD_TARGET != Build_Variants[.Release] && CONFIG_VERBOSE_LOG do log.warnf("Using plain enum in options is not recommended")
+			when CONFIG_BUILD_VARIANT != Build_Variants[.Release] && CONFIG_VERBOSE_LOG do log.warnf("Using plain enum in options is not recommended")
 			save_handle_enum(info, &t, config_tag, f, offset, field_value_any)
-		case:
 		}
-
 	}
 }
 
