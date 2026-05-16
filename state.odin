@@ -190,7 +190,7 @@ set_default_context_cleanup_procs :: proc(procs: Context_State_Cleanup_Procs) ->
 change_logger_ident :: proc(new_ident: string, state: ^Context_State) {
 	when CONFIG_BUILD_TARGET == Build_Targets[.Mobile] && ODIN_PLATFORM_SUBTARGET == .Android {
 		d := cast(^Android_Logger_Data)state.ctx.logger.data
-		cident := strings.clone_to_cstring(new_ident, d.allocator) // Should be stratch so we dont need to free it
+		cident := strings.clone_to_cstring(new_ident, d.allocator) // we're using linear arena so we do not need to free single allocations
 		d.ident = cident
 	} else when CONFIG_BUILD_TARGET == Build_Targets[.Pc] {
 		d := cast(^log.File_Console_Logger_Data)state.ctx.logger.data
