@@ -36,9 +36,6 @@ engine_init :: proc "contextless" (
 }
 
 engine_cleanup :: proc(state: ^Engine_Global_State, procs := Engine_State_Cleanup_Procs{}) {
-	saved := save_configuration()
-	if !saved do log.error("Engine configuration not saved")
-
 	when CONFIG_BUILD_VARIANT == Build_Variants[.Editor] {
 		success := build_asset_packed(&state.assets)
 		if !success do log.error("Building assets file failed")
@@ -73,12 +70,14 @@ engine_renderer_cleanup :: proc(state: ^Engine_Global_State) {
 	log.infof("Avg frame time: %.4f ms (%.0f FPS)", avg_frame_time_ms, avg_fps)
 	engine_write_performance_stats(avg_fps, avg_frame_time_ms)
 	cleanup_frame_resources(&state.renderer.core, &state.renderer.dyn)
+	saved := save_configuration()
+	if !saved do log.error("Engine configuration not saved")
 	cleanup_vulkan(&state.renderer)
 	cleanup_window(&state.window)
 }
 
 engine_write_performance_stats :: proc(avg_fps: f64, avg_frame_time_ms: f64, temp_allocator := context.temp_allocator) {
-	f, err := engine_open("performance.txt", {.Create, .Trunc, .Write})
+	f, err := engine_open("performance.txt", {.Create, .Trunc, .Write}, android_options = {.Search_External_Storage})
 	if err != nil {
 		log.errorf("Failed to save performance stats into file: %v", err)
 		return

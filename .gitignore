@@ -7,3 +7,7 @@ OdinRenderer
 gdb.txt
 *.engine
 performance.txt
+keystore
+.keystore
+*.keystore
+*.jks

@@ -5,43 +5,49 @@ when ODIN_OS != .Linux do #panic("Cannot build android APKs on " + ODIN_OS + ". 
 
 import "base:runtime"
 
-import "core:os"
+import "core:fmt"
 import "core:io"
+import "core:os"
+import fp "core:path/filepath"
+import "core:strconv"
+import "core:strings"
 import "core:sync"
 import "core:sys/linux"
 import "core:time"
-import "core:strconv"
-import "core:strings"
-import "core:fmt"
-import "core:log"
-import fp "core:path/filepath"
 
 import android "androidglue/ndkbindings"
 
 File_Impl :: struct {
-	name: string,
-	fd: linux.Fd,
-	file: os.File,
+	name:      string,
+	fd:        linux.Fd,
+	file:      os.File,
 	allocator: runtime.Allocator,
-
-	buffer:   []byte,
-	rw_mutex: sync.RW_Mutex, // read write calls
-	p_mutex:  sync.Mutex, // pread pwrite calls
+	buffer:    []byte,
+	rw_mutex:  sync.RW_Mutex, // read write calls
+	p_mutex:   sync.Mutex, // pread pwrite calls
 }
 Android_File_Impl :: struct {
-	using _: File_Impl,
+	using _:    File_Impl,
 	asset_data: ^Android_Asset_File_Data,
 }
 
 Android_Asset_File_Data :: struct {
-	handle: ^android.AAsset,
-	flags: Android_File_Impl_Flags,
+	handle:                                    ^android.AAsset,
+	flags:                                     Android_File_Impl_Flags,
 	internal_offset, start_offset, end_offset: i64, // Used for using linux.read to prevent destroying AAsset global offset when ommiting AAsset Manager
 }
 
 // TODO: Fix writing to external and internal storage on Android
 // Thread safe flag is only used for APK, app pointer needs to be passed
-android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Permissions_Default, open_options := Android_Search_Everywhere_Not_Thread_Safe_Flags) -> (f: ^os.File, err: os.Error) {
+android_open :: proc(
+	name: string,
+	flags := os.File_Flags{.Read},
+	perm := os.Permissions_Default,
+	open_options := Android_Search_Everywhere_Not_Thread_Safe_Flags,
+) -> (
+	f: ^os.File,
+	err: os.Error,
+) {
 	// Maybe if unsuporrted flags && only search asset return early? idk maybe let open it cause android proc will just return unsupported and let use the file in other ways?
 	//if (.Write in flags || .Create in flags || .Trunc in flags || .Excl in flags || .Append in flags)\
 	//&& Android_File_Impl_Flags{.Search_Assets} & open_options == Android_File_Impl_Flags{.Serach_Assets} {}
@@ -57,10 +63,19 @@ android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Per
 	if .Search_Assets in open_options {
 		asset := android.AAssetManager_open(app.activity.assetManager, cname, .RANDOM)
 		if asset != nil {
-		start, length: i64
-		fd := android.AAsset_openFileDescriptor64(asset, &start, &length)
-		if fd > 0 do android.AAsset_close(asset)
-		return android_new_file_asset(linux.Fd(fd), name, start, length, app, asset, open_options, runtime.heap_allocator())
+			start, length: i64
+			fd := android.AAsset_openFileDescriptor64(asset, &start, &length)
+			if fd > 0 do android.AAsset_close(asset)
+			return android_new_file_asset(
+				linux.Fd(fd),
+				name,
+				start,
+				length,
+				app,
+				asset,
+				open_options,
+				runtime.heap_allocator(),
+			)
 		}
 	}
 
@@ -71,7 +86,7 @@ android_open :: proc(name: string, flags := os.File_Flags{.Read}, perm := os.Per
 	when size_of(rawptr) == 4 {
 		sys_flags += {.LARGEFILE}
 	}
-	switch flags & (os.O_RDONLY|os.O_WRONLY|os.O_RDWR) {
+	switch flags & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR) {
 	case os.O_RDONLY:
 	case os.O_WRONLY: sys_flags += {.WRONLY}
 	case os.O_RDWR:   sys_flags += {.RDWR}
@@ -184,6 +199,7 @@ android_new_file_storage :: proc(fd: linux.Fd, name: string, start, length: i64,
 	impl.name = strings.clone(name, allocator) or_return
 
 	impl.allocator = allocator
+	impl.fd = fd
 	impl.file.impl = impl
 	impl.file.stream.procedure = android_file_proc
 	impl.file.stream.data = app
@@ -192,7 +208,7 @@ android_new_file_storage :: proc(fd: linux.Fd, name: string, start, length: i64,
 	return &impl.file, nil
 }
 
-@(private="file")
+@(private = "file")
 android_close :: proc(impl: ^Android_File_Impl) -> (err: os.Error) {
 	// So we have 3 options that we need to consider when clearing up (thread synchronization of closing file is responsibility of a caller, we only synchronize APKs reads and seek etc.):
 	// - either we have normal file with valid fd and nil in asset_data
@@ -215,7 +231,7 @@ android_close :: proc(impl: ^Android_File_Impl) -> (err: os.Error) {
 	return
 }
 
-@(private="file")
+@(private = "file")
 android_size :: proc(impl: ^Android_File_Impl) -> (size: i64, err: os.Error) {
 	if impl.fd < 0 do return android.AAsset_getLength64(impl.asset_data.handle), nil
 	else {
@@ -244,7 +260,7 @@ _get_absolute_offset :: proc(data: ^Android_Asset_File_Data, offset: i64, whence
 	return data.start_offset + new_rel, nil
 }
 
-@(private="file")
+@(private = "file")
 _android_read :: proc(data: ^Android_File_Impl, p: []byte) -> (n: i64, err: os.Error) {
 	if len(p) <= 0 do return 0, nil
 	p := p[:min(len(p), MAX_RW)]
@@ -257,7 +273,7 @@ _android_read :: proc(data: ^Android_File_Impl, p: []byte) -> (n: i64, err: os.E
 	} else do return _android_read_internal(data, p)
 }
 
-@(private="file")
+@(private = "file")
 _android_read_internal :: proc(data: ^Android_File_Impl, p: []byte) -> (n: i64, err: os.Error) {
 	if data.fd < 0 {
 		read := android.AAsset_read(data.asset_data.handle, raw_data(p), len(p))
@@ -308,7 +324,7 @@ _android_read_at :: proc(data: ^Android_File_Impl, p: []byte, offset: i64) -> (n
 _android_read_at_compressed :: proc(data: ^Android_File_Impl, p: []byte, offset: i64) -> (n: i64, err: os.Error) {
 	curr := android.AAsset_seek(data.asset_data.handle, 0, .CUR)
 	if curr < 0 do return 0, .Unknown
-	defer  android.AAsset_seek(data.asset_data.handle, curr, .SET)
+	defer android.AAsset_seek(data.asset_data.handle, curr, .SET)
 
 	requested := android.AAsset_seek(data.asset_data.handle, offset, .SET)
 	if requested < 0 do return 0, .Invalid_Offset
@@ -357,14 +373,12 @@ _android_seek_internal :: proc(data: ^Android_File_Impl, offset: i64, whence: io
 //    correct logic is baked in regardless of the build host.
 
 
-
-
 // Most implementations will EINVAL at some point when doing big writes.
 // In practice a read/write call would probably never read/write these big buffers all at once,
 // which is why the number of bytes is returned and why there are procs that will call this in a
 // loop for you.
 // We set a max of 1GB to keep alignment and to be safe.
-@(private="file")
+@(private = "file")
 MAX_RW :: 1 << 30
 
 // Mostly like linux file proc, but closing is different to handle additonal Android data
@@ -405,7 +419,7 @@ android_handle_file_proc :: proc(stream_data: rawptr, mode: os.File_Stream_Mode,
 	return 0, .Unsupported
 }
 
-@(private="file")
+@(private = "file")
 _read :: proc(f: ^File_Impl, p: []byte) -> (i64, os.Error) {
 	if len(p) <= 0 {
 		return 0, nil
@@ -417,7 +431,7 @@ _read :: proc(f: ^File_Impl, p: []byte) -> (i64, os.Error) {
 	}
 	return i64(n), io.Error.EOF if n == 0 else nil
 }
-@(private="file")
+@(private = "file")
 _read_at :: proc(f: ^File_Impl, p: []byte, offset: i64) -> (i64, os.Error) {
 	if len(p) <= 0 {
 		return 0, nil
@@ -435,7 +449,7 @@ _read_at :: proc(f: ^File_Impl, p: []byte, offset: i64) -> (i64, os.Error) {
 	return i64(n), nil
 }
 
-@(private="file")
+@(private = "file")
 _write :: proc(f: ^File_Impl, p: []byte) -> (nt: i64, err: os.Error) {
 	p := p
 	for len(p) > 0 {
@@ -449,10 +463,20 @@ _write :: proc(f: ^File_Impl, p: []byte) -> (nt: i64, err: os.Error) {
 		nt += i64(n)
 	}
 
+	/*
+	I guess that's not really needed anymore?
+	sync_errno := linux.fsync(f.fd)
+	if sync_errno != .NONE {
+		log.errorf("[FILE INSPECT] _write: error writing on fd %v: %v", f.fd, sync_errno)
+	} else {
+		log.info("[FILE INSPECT] _write: Fsync succeded.")
+	}
+	*/
+
 	return
 }
 
-@(private="file")
+@(private = "file")
 _write_at :: proc(f: ^File_Impl, p: []byte, offset: i64) -> (nt: i64, err: os.Error) {
 	if offset < 0 {
 		return 0, .Invalid_Offset
@@ -475,7 +499,7 @@ _write_at :: proc(f: ^File_Impl, p: []byte, offset: i64) -> (nt: i64, err: os.Er
 	return
 }
 
-@(no_sanitize_memory, private="file")
+@(no_sanitize_memory, private = "file")
 _file_size :: proc(f: ^File_Impl) -> (n: i64, err: os.Error) {
 	// TODO: Identify 0-sized "pseudo" files and return No_Size. This would
 	//       eliminate the need for the _read_entire_pseudo_file procs.
@@ -491,7 +515,7 @@ _file_size :: proc(f: ^File_Impl) -> (n: i64, err: os.Error) {
 	return 0, .No_Size
 }
 
-@(private="file")
+@(private = "file")
 _flush :: proc(f: ^File_Impl) -> os.Error {
 	return _get_platform_error(linux.fsync(f.fd))
 }
@@ -508,7 +532,7 @@ file_stream_fstat_utility :: proc(f: ^File_Impl, p: []byte, allocator: runtime.A
 	return
 }
 
-@(private="file")
+@(private = "file")
 _seek :: proc(f: ^File_Impl, offset: i64, whence: io.Seek_From) -> (ret: i64, err: os.Error) {
 	// We have to handle this here, because Linux returns EINVAL for both
 	// invalid offsets and invalid whences.
@@ -528,7 +552,7 @@ _seek :: proc(f: ^File_Impl, offset: i64, whence: io.Seek_From) -> (ret: i64, er
 		return 0, _get_platform_error(errno)
 	}
 }
-@(private="file")
+@(private = "file")
 _get_platform_error :: proc(errno: linux.Errno) -> os.Error {
 	#partial switch errno {
 	case .NONE:
@@ -554,7 +578,7 @@ _get_platform_error :: proc(errno: linux.Errno) -> os.Error {
 	return os.Platform_Error(i32(errno))
 }
 
-@(private="file")
+@(private = "file")
 _fstat :: proc(f: ^os.File, allocator: runtime.Allocator) -> (os.File_Info, os.Error) {
 	impl := (^File_Impl)(f.impl)
 	return _fstat_internal(impl.fd, allocator)
@@ -612,9 +636,9 @@ _get_full_path :: proc(fd: linux.Fd, allocator: runtime.Allocator) -> (fullpath:
 	return
 }
 
-@(private="file")
+@(private = "file")
 _read_link_cstr :: proc(name_cstr: cstring, allocator: runtime.Allocator) -> (string, os.Error) {
-	bufsz : uint = 256
+	bufsz: uint = 256
 	buf := make([]byte, bufsz, allocator)
 	for {
 		sz, errno := linux.readlink(name_cstr, buf[:])
@@ -631,7 +655,7 @@ _read_link_cstr :: proc(name_cstr: cstring, allocator: runtime.Allocator) -> (st
 	}
 }
 
-@(private="file")
+@(private = "file")
 split_path :: proc(path: string) -> (dir, file: string) {
 	i := len(path) - 1
 	for i >= 0 && !_is_path_separator(path[i]) {
@@ -645,14 +669,14 @@ split_path :: proc(path: string) -> (dir, file: string) {
 	return "", path
 }
 
-@(private="file")
-_Path_Separator        :: '/'
-@(private="file")
+@(private = "file")
+_Path_Separator :: '/'
+@(private = "file")
 _is_path_separator :: proc(c: byte) -> bool {
 	return c == _Path_Separator
 }
 
-@(private="file")
+@(private = "file")
 _destroy :: proc(f: ^File_Impl) -> os.Error {
 	if f == nil {
 		return nil

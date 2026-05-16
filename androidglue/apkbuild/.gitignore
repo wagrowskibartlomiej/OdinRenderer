@@ -6,3 +6,6 @@ libmain.so
 *.apk-build
 *.apk.idsig
 keystore
+.keystore
+*.keystore
+*.jks

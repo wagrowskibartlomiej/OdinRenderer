@@ -428,7 +428,7 @@ set_all_default_settings :: proc() {
 
 
 save_configuration :: proc() -> (success: bool) {
-	f, err := engine_open(ENGINE_CONFIGURATION_FILE_NAME, {.Create, .Trunc, .Write})
+	f, err := engine_open(ENGINE_CONFIGURATION_FILE_NAME, {.Create, .Trunc, .Write}, android_options = {.Search_External_Storage})
 	if err != nil {
 		log.errorf("Engine configuration save attempt failed: %v", err)
 		return false
@@ -703,7 +703,7 @@ cast_enum_value_to_i64 :: proc(enum_ptr: rawptr, size: int) -> i64 {
 
 
 load_configuration :: proc(settings_string_allocator: runtime.Allocator, temp_allocator := context.temp_allocator) {
-	f, err := engine_open(ENGINE_CONFIGURATION_FILE_NAME)
+	f, err := engine_open(ENGINE_CONFIGURATION_FILE_NAME, android_options = {.Search_External_Storage})
 	if err != nil {
 		log.infof("Failed to open '%v' file to read enigne configuration: %v", ENGINE_CONFIGURATION_FILE_NAME, err)
 		return
