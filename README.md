@@ -26,12 +26,12 @@ First, building the debug preset or editor variant is needed, because it'll buil
 
 ## Debugging
 ### RenderDoc
-    1. You can use RenderDoc with the engine.
-    2. If you're on Wayland passing hint to GLFW for using X11 should help if you're experiencing any bugs. 
-    3. I've also managed to sucessfully capture frames from Android with RenderDoc.
+1. You can use RenderDoc with the engine.
+2. If you're on Wayland passing hint to GLFW for using X11 should help if you're experiencing any bugs. 
+3. I've also managed to sucessfully capture frames from Android with RenderDoc.
 ### Vulkan Validation Layers
-    1. Validation Layers should work properly when **configuration.engine** file has them **enabled**.
-    2. If you want to use Validation Layers on Android you need to place layers .so file next to libmain.so, from there it'll be bundled in APK and from my experience it works fine.
+1. Validation Layers should work properly when **configuration.engine** file has them **enabled**.
+2. If you want to use Validation Layers on Android you need to place layers .so file next to libmain.so, from there it'll be bundled in APK and from my experience it works fine.
 ### Logging
-    1. You can use **-define:VERBOSE_LOGGING=true** to enable more detailed logs.
-    2. Logging on Android does work, by using logger that writes to Logcat.
+1. You can use **-define:VERBOSE_LOGGING=true** to enable more detailed logs.
+2. Logging on Android does work, by using logger that writes to Logcat.
